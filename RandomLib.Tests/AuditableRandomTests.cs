@@ -262,6 +262,209 @@ public class UniformDistributionTests(ITestOutputHelper output)
 }
 
 /// <summary>
+/// 당첨 확률 1%인 추첨을 10명의 사용자에 대해 반복 실행하며,
+/// 각 사용자의 "연속 미당첨(streak)" 길이를 수집한다. 최장 기록 하나만이 아니라
+/// 상위 3개(TOP 3) 연속 미당첨 streak을 사용자별로 모아 표시한다.
+/// 명시 seed 경로(GetBlockChaCha20(seed, userId, tick))를 쓰므로
+/// Initialize() 없이 독립적이고 재현 가능하게 실행된다.
+/// </summary>
+public class NoWinStreakTests(ITestOutputHelper output)
+{
+	private static byte[] Seed()
+	{
+		byte[] s = new byte[32];
+		for (Int32 i = 0; i < 32; i++)
+			s[i] = (byte)(0xE0 + i);
+		return s;
+	}
+
+	[Fact]
+	public void Top3NoWinStreaks_PerUser()
+	{
+		const Int32 UserCount = 10;
+		const Int32 DrawsPerUser = 100_000;
+		const Int32 WinDenominator = 100; // 당첨 확률 1% (Next(userId, 100) == 0)
+
+		byte[] seed = Seed();
+
+		output.WriteLine(
+			$"사용자: {UserCount}명  추첨/인: {DrawsPerUser:N0}회  " +
+			$"당첨 확률: {100.0 / WinDenominator:F0}% (Next(userId, {WinDenominator}) == 0)");
+		output.WriteLine(new string('-', 64));
+
+		for (Int32 u = 0; u < UserCount; u++)
+		{
+			string userId = $"user-{u:D2}";
+
+			// 상위 3개 streak만 내림차순으로 유지한다(네 번째로 작은 값은 버린다).
+			Int32[] top3 = [0, 0, 0];
+			Int32 currentStreak = 0;
+			Int32 wins = 0;
+			Int64 totalMisses = 0;
+			Int32 completedStreaks = 0;
+
+			for (Int64 tick = 1; tick <= DrawsPerUser; tick++)
+			{
+				// Next(userId, WinDenominator)와 동일한 [0, WinDenominator) 값을 명시 seed로 결정론적으로 뽑는다.
+				UInt32 draw = NextValue(seed, userId, tick, (UInt32)WinDenominator);
+
+				if (draw == 0) // 당첨 → 진행 중이던 미당첨 streak 종료
+				{
+					wins++;
+					RecordStreak(top3, currentStreak);
+					completedStreaks++;
+					currentStreak = 0;
+				}
+				else // 미당첨 → streak 증가
+				{
+					currentStreak++;
+					totalMisses++;
+				}
+			}
+			// 마지막까지 당첨 없이 끝난 잔여 streak도 후보로 기록한다.
+			RecordStreak(top3, currentStreak);
+
+			// 불변식: 모든 추첨은 당첨 또는 미당첨 중 정확히 하나다(seed 무관, 항상 성립).
+			Assert.Equal(DrawsPerUser, wins + totalMisses);
+			// TOP 3를 채우려면 완료된 streak이 최소 3개는 있어야 한다.
+			Assert.True(completedStreaks >= 3,
+				$"{userId}: 완료된 streak이 3개 미만({completedStreaks})");
+			// TOP 3는 내림차순이어야 한다.
+			Assert.True(top3[0] >= top3[1] && top3[1] >= top3[2],
+				$"{userId}: TOP3가 내림차순이 아님 [{top3[0]}, {top3[1]}, {top3[2]}]");
+
+			output.WriteLine(
+				$"{userId}  당첨 {wins,4}회  " +
+				$"TOP3 연속 미당첨: [{top3[0],3}, {top3[1],3}, {top3[2],3}]");
+		}
+	}
+
+	[Fact]
+	public void Top3NoWinStreaks_PerUser_100Draws() => RunTop3NoWinStreaks(100);
+
+	[Fact]
+	public void Top3NoWinStreaks_PerUser_200Draws() => RunTop3NoWinStreaks(200);
+
+	[Fact]
+	public void Top3NoWinStreaks_PerUser_300Draws() => RunTop3NoWinStreaks(300);
+
+	[Fact]
+	public void Top3NoWinStreaks_PerUser_400Draws() => RunTop3NoWinStreaks(400);
+
+	[Fact]
+	public void Top3NoWinStreaks_PerUser_500Draws() => RunTop3NoWinStreaks(500);
+
+	/// <summary>
+	/// 추첨 횟수가 적은(수백 회) 시나리오의 공통 본문. 당첨이 평균 수 회뿐이라
+	/// 완료된 streak이 3개 미만일 수 있으므로 >=3은 단언하지 않는다.
+	/// </summary>
+	private void RunTop3NoWinStreaks(Int32 drawsPerUser)
+	{
+		const Int32 UserCount = 10;
+		const Int32 WinDenominator = 100; // 당첨 확률 1% (Next(userId, 100) == 0)
+
+		byte[] seed = Seed();
+
+		output.WriteLine(
+			$"사용자: {UserCount}명  추첨: {drawsPerUser:N0}회  " +
+			$"당첨 확률: {100.0 / WinDenominator:F0}% (Next(userId, {WinDenominator}) == 0)");
+		output.WriteLine(new string('-', 64));
+
+		for (Int32 u = 0; u < UserCount; u++)
+		{
+			string userId = $"user-{u:D2}";
+
+			// 상위 3개 streak만 내림차순으로 유지한다(네 번째로 작은 값은 버린다).
+			Int32[] top3 = [0, 0, 0];
+			Int32 currentStreak = 0;
+			Int32 wins = 0;
+			Int64 totalMisses = 0;
+
+			for (Int64 tick = 1; tick <= drawsPerUser; tick++)
+			{
+				// Next(userId, WinDenominator)와 동일한 [0, WinDenominator) 값을 명시 seed로 결정론적으로 뽑는다.
+				UInt32 draw = NextValue(seed, userId, tick, (UInt32)WinDenominator);
+
+				if (draw == 0) // 당첨 → 진행 중이던 미당첨 streak 종료
+				{
+					wins++;
+					RecordStreak(top3, currentStreak);
+					currentStreak = 0;
+				}
+				else // 미당첨 → streak 증가
+				{
+					currentStreak++;
+					totalMisses++;
+				}
+			}
+			// 마지막까지 당첨 없이 끝난 잔여 streak도 후보로 기록한다.
+			RecordStreak(top3, currentStreak);
+
+			// 불변식: 모든 추첨은 당첨 또는 미당첨 중 정확히 하나다(seed 무관, 항상 성립).
+			Assert.Equal(drawsPerUser, wins + totalMisses);
+			// TOP 3는 내림차순이어야 한다.
+			Assert.True(top3[0] >= top3[1] && top3[1] >= top3[2],
+				$"{userId}: TOP3가 내림차순이 아님 [{top3[0]}, {top3[1]}, {top3[2]}]");
+			// 추첨이 적어 완료 streak이 3개 미만일 수 있으므로 >=3은 단언하지 않는다.
+			// 대신 최장 streak이 총 추첨 수를 넘지 않는지(당첨 0회면 drawsPerUser까지 가능)만 검증한다.
+			Assert.InRange(top3[0], 0, drawsPerUser);
+
+			output.WriteLine(
+				$"{userId}  당첨 {wins,3}회  " +
+				$"TOP3 연속 미당첨: [{top3[0],3}, {top3[1],3}, {top3[2],3}]");
+		}
+	}
+
+	/// <summary>
+	/// 명시 seed 경로로 <c>Next(userId, maxExclusive)</c>와 동일한 <c>[0, maxExclusive)</c> 값을 뽑는다.
+	/// 전역 <see cref="AuditableRandom.NextUInt32(string, UInt32, out Int64)"/>와 똑같은
+	/// 거부표본추출(모듈로 편향 없음)을 한 블록의 16워드에 적용한다.
+	/// Initialize() 없이 결정론적·재현 가능하게 실행되도록 seed와 tick을 직접 받는다.
+	/// </summary>
+	private static UInt32 NextValue(byte[] seed, string userId, Int64 tick, UInt32 maxExclusive)
+	{
+		UInt32 limit = (UInt32.MaxValue / maxExclusive) * maxExclusive;
+		Span<byte> block = stackalloc byte[64];
+		while (true)
+		{
+			AuditableRandom.GetBlockChaCha20(seed, userId, tick, block);
+			for (Int32 i = 0; i <= 64 - 4; i += 4)
+			{
+				UInt32 raw = BinaryPrimitives.ReadUInt32BigEndian(block.Slice(i, 4));
+				if (raw < limit)
+					return raw % maxExclusive;
+			}
+			// 한 블록의 16워드가 모두 거부될 확률은 사실상 0이지만, 전역 NextUInt32와 동형으로
+			// 다음 tick에서 결정론적으로 재시도한다(벽시계 대신 tick+1로 진행).
+			tick++;
+		}
+	}
+
+	/// <summary>streak을 상위 3개 배열(내림차순)에 삽입한다. 최솟값 이하면 버린다.</summary>
+	private static void RecordStreak(Int32[] top3, Int32 streak)
+	{
+		if (streak <= top3[2])
+			return;
+
+		if (streak >= top3[0])
+		{
+			top3[2] = top3[1];
+			top3[1] = top3[0];
+			top3[0] = streak;
+		}
+		else if (streak >= top3[1])
+		{
+			top3[2] = top3[1];
+			top3[1] = streak;
+		}
+		else
+		{
+			top3[2] = streak;
+		}
+	}
+}
+
+/// <summary>
 /// 전역 Initialize는 프로세스당 단 한 번만 성공하는 정적 상태라,
 /// 이 어셈블리에서 Initialize를 호출하는 테스트는 이 하나뿐이어야 한다.
 /// A3(재시작 간 tick 유일성)와 이중 초기화 방지를 함께 검증한다.

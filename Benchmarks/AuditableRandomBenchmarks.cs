@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Security.Cryptography;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Columns;
@@ -26,6 +27,16 @@ public class AuditableRandomBenchmarks
     }
 
     private static int _initialized;
+
+    // private static 메서드라 리플렉션으로 델리게이트를 만들어 직접 호출한다.
+    private static readonly Func<long> _getUniqueExecutionTicks = CreateGetUniqueExecutionTicksDelegate();
+
+    private static Func<long> CreateGetUniqueExecutionTicksDelegate()
+    {
+        MethodInfo method = typeof(AuditableRandom).GetMethod("GetUniqueExecutionTicks", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new MissingMethodException(nameof(AuditableRandom), "GetUniqueExecutionTicks");
+        return (Func<long>)method.CreateDelegate(typeof(Func<long>));
+    }
 
     private readonly List<int> _list100 = Enumerable.Range(0, 100).ToList();
 
@@ -80,6 +91,11 @@ public class AuditableRandomBenchmarks
 
     [Benchmark]
     public byte[] GetBlock_WithUserId() => AuditableRandom.GetBlockChaCha20("user-0000000000000001", out _);
+
+    // ── 내부 타임스탬프(틱) 생성 ─────────────────────────────────────────────
+
+    [Benchmark]
+    public long GetUniqueExecutionTicks() => _getUniqueExecutionTicks();
 
     // ── 셔플 ─────────────────────────────────────────────────────────────────
 
