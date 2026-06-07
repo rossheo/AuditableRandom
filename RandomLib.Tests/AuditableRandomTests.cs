@@ -279,67 +279,6 @@ public class NoWinStreakTests(ITestOutputHelper output)
 	}
 
 	[Fact]
-	public void Top3NoWinStreaks_PerUser()
-	{
-		const Int32 UserCount = 10;
-		const Int32 DrawsPerUser = 100_000;
-		const Int32 WinDenominator = 100; // 당첨 확률 1% (Next(userId, 100) == 0)
-
-		byte[] seed = Seed();
-
-		output.WriteLine(
-			$"사용자: {UserCount}명  추첨/인: {DrawsPerUser:N0}회  " +
-			$"당첨 확률: {100.0 / WinDenominator:F0}% (Next(userId, {WinDenominator}) == 0)");
-		output.WriteLine(new string('-', 64));
-
-		for (Int32 u = 0; u < UserCount; u++)
-		{
-			string userId = $"user-{u:D2}";
-
-			// 상위 3개 streak만 내림차순으로 유지한다(네 번째로 작은 값은 버린다).
-			Int32[] top3 = [0, 0, 0];
-			Int32 currentStreak = 0;
-			Int32 wins = 0;
-			Int64 totalMisses = 0;
-			Int32 completedStreaks = 0;
-
-			for (Int64 tick = 1; tick <= DrawsPerUser; tick++)
-			{
-				// Next(userId, WinDenominator)와 동일한 [0, WinDenominator) 값을 명시 seed로 결정론적으로 뽑는다.
-				UInt32 draw = NextValue(seed, userId, tick, (UInt32)WinDenominator);
-
-				if (draw == 0) // 당첨 → 진행 중이던 미당첨 streak 종료
-				{
-					wins++;
-					RecordStreak(top3, currentStreak);
-					completedStreaks++;
-					currentStreak = 0;
-				}
-				else // 미당첨 → streak 증가
-				{
-					currentStreak++;
-					totalMisses++;
-				}
-			}
-			// 마지막까지 당첨 없이 끝난 잔여 streak도 후보로 기록한다.
-			RecordStreak(top3, currentStreak);
-
-			// 불변식: 모든 추첨은 당첨 또는 미당첨 중 정확히 하나다(seed 무관, 항상 성립).
-			Assert.Equal(DrawsPerUser, wins + totalMisses);
-			// TOP 3를 채우려면 완료된 streak이 최소 3개는 있어야 한다.
-			Assert.True(completedStreaks >= 3,
-				$"{userId}: 완료된 streak이 3개 미만({completedStreaks})");
-			// TOP 3는 내림차순이어야 한다.
-			Assert.True(top3[0] >= top3[1] && top3[1] >= top3[2],
-				$"{userId}: TOP3가 내림차순이 아님 [{top3[0]}, {top3[1]}, {top3[2]}]");
-
-			output.WriteLine(
-				$"{userId}  당첨 {wins,4}회  " +
-				$"TOP3 연속 미당첨: [{top3[0],3}, {top3[1],3}, {top3[2],3}]");
-		}
-	}
-
-	[Fact]
 	public void Top3NoWinStreaks_PerUser_100Draws() => RunTop3NoWinStreaks(100);
 
 	[Fact]
@@ -353,6 +292,9 @@ public class NoWinStreakTests(ITestOutputHelper output)
 
 	[Fact]
 	public void Top3NoWinStreaks_PerUser_500Draws() => RunTop3NoWinStreaks(500);
+
+	[Fact]
+	public void Top3NoWinStreaks_PerUser_100000Draws() => RunTop3NoWinStreaks(100_000);
 
 	/// <summary>
 	/// 추첨 횟수가 적은(수백 회) 시나리오의 공통 본문. 당첨이 평균 수 회뿐이라
