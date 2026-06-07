@@ -1,0 +1,104 @@
+# Remove the line below if you want to inherit .editorconfig settings from higher directories
+root = true
+
+[*]
+guidelines = 110 dashed
+
+# C# files
+[*.cs]
+charset = utf-8
+
+#### Core EditorConfig Options ####
+
+# Indentation and spacing
+indent_size = 4
+indent_style = tab
+tab_width = 4
+max_line_length = 110
+
+# New line preferences
+end_of_line = native
+insert_final_newline = false
+
+# Whitespace preferences
+trim_trailing_whitespace = true
+
+#### .NET Coding Conventions ####
+
+# Miscellaneous style rules
+file_header_template = unset
+dotnet_style_predefined_type_for_locals_parameters_members = false:suggestion
+dotnet_style_predefined_type_for_member_access = false:suggestion
+
+[*.razor]
+charset = utf-8
+# Indentation and spacing
+indent_size = 4
+indent_style = tab
+tab_width = 4
+max_line_length = 110
+# Whitespace preferences
+trim_trailing_whitespace = true
+
+[*.scriban]
+charset = utf-8
+# Indentation and spacing
+indent_size = 4
+indent_style = tab
+tab_width = 4
+max_line_length = 110
+# Whitespace preferences
+trim_trailing_whitespace = true
+
+# Xml project files
+[*.{csproj,vbproj,vcxproj,vcxproj.filters,proj,nativeproj,locproj}]
+charset = utf-8
+indent_size = 2
+# Whitespace preferences
+trim_trailing_whitespace = true
+
+# Xml build files
+[*.builds]
+charset = utf-8
+indent_size = 2
+
+# Xml files
+[*.{xml,stylecop,resx,ruleset}]
+charset = utf-8
+indent_size = 2
+# Whitespace preferences
+trim_trailing_whitespace = true
+
+# Xml config files
+[*.{props,targets,config,nuspec}]
+charset = utf-8
+indent_size = 2
+# Whitespace preferences
+trim_trailing_whitespace = true
+
+# YAML
+# http://yaml.org/spec/1.2/2009-07-21/spec.html#id2576668
+[*.{yaml,yml}]
+charset = utf-8
+indent_size = 2
+# Whitespace preferences
+trim_trailing_whitespace = true
+
+# Json
+[*.json]
+charset = utf-8
+# Indentation and spacing
+indent_size = 4
+indent_style = tab
+tab_width = 4
+# Whitespace preferences
+trim_trailing_whitespace = true
+
+# Shell scripts
+[*.sh]
+charset = utf-8
+end_of_line = lf
+
+[*.{cmd, bat}]
+charset = utf-8
+end_of_line = crlf
