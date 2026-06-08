@@ -279,22 +279,40 @@ public class NoWinStreakTests(ITestOutputHelper output)
 	}
 
 	[Fact]
-	public void Top3NoWinStreaks_PerUser_100Draws() => RunTop3NoWinStreaks(100);
+	public void AuditableRandom_Top3NoWinStreaks_PerUser_100Draws() => RunTop3NoWinStreaks(100);
 
 	[Fact]
-	public void Top3NoWinStreaks_PerUser_200Draws() => RunTop3NoWinStreaks(200);
+	public void AuditableRandom_Top3NoWinStreaks_PerUser_200Draws() => RunTop3NoWinStreaks(200);
 
 	[Fact]
-	public void Top3NoWinStreaks_PerUser_300Draws() => RunTop3NoWinStreaks(300);
+	public void AuditableRandom_Top3NoWinStreaks_PerUser_300Draws() => RunTop3NoWinStreaks(300);
 
 	[Fact]
-	public void Top3NoWinStreaks_PerUser_400Draws() => RunTop3NoWinStreaks(400);
+	public void AuditableRandom_Top3NoWinStreaks_PerUser_400Draws() => RunTop3NoWinStreaks(400);
 
 	[Fact]
-	public void Top3NoWinStreaks_PerUser_500Draws() => RunTop3NoWinStreaks(500);
+	public void AuditableRandom_Top3NoWinStreaks_PerUser_500Draws() => RunTop3NoWinStreaks(500);
 
 	[Fact]
-	public void Top3NoWinStreaks_PerUser_100000Draws() => RunTop3NoWinStreaks(100_000);
+	public void AuditableRandom_Top3NoWinStreaks_PerUser_100000Draws() => RunTop3NoWinStreaks(100_000);
+
+	[Fact]
+	public void SystemRandom_Top3NoWinStreaks_PerUser_100Draws() => RunTop3NoWinStreaksWithSystemRandom(100);
+
+	[Fact]
+	public void SystemRandom_Top3NoWinStreaks_PerUser_200Draws() => RunTop3NoWinStreaksWithSystemRandom(200);
+
+	[Fact]
+	public void SystemRandom_Top3NoWinStreaks_PerUser_300Draws() => RunTop3NoWinStreaksWithSystemRandom(300);
+
+	[Fact]
+	public void SystemRandom_Top3NoWinStreaks_PerUser_400Draws() => RunTop3NoWinStreaksWithSystemRandom(400);
+
+	[Fact]
+	public void SystemRandom_Top3NoWinStreaks_PerUser_500Draws() => RunTop3NoWinStreaksWithSystemRandom(500);
+
+	[Fact]
+	public void SystemRandom_Top3NoWinStreaks_PerUser_100000Draws() => RunTop3NoWinStreaksWithSystemRandom(100_000);
 
 	/// <summary>
 	/// 추첨 횟수가 적은(수백 회) 시나리오의 공통 본문. 당첨이 평균 수 회뿐이라
@@ -349,6 +367,62 @@ public class NoWinStreakTests(ITestOutputHelper output)
 				$"{userId}: TOP3가 내림차순이 아님 [{top3[0]}, {top3[1]}, {top3[2]}]");
 			// 추첨이 적어 완료 streak이 3개 미만일 수 있으므로 >=3은 단언하지 않는다.
 			// 대신 최장 streak이 총 추첨 수를 넘지 않는지(당첨 0회면 drawsPerUser까지 가능)만 검증한다.
+			Assert.InRange(top3[0], 0, drawsPerUser);
+
+			output.WriteLine(
+				$"{userId}  당첨 {wins,3}회  " +
+				$"TOP3 연속 미당첨: [{top3[0],3}, {top3[1],3}, {top3[2],3}]");
+		}
+	}
+
+	/// <summary>
+	/// 위와 동일한 시나리오를 .NET 기본 랜덤 엔진(<see cref="Random"/>)으로 실행해 비교 기준선을 제공한다.
+	/// AuditableRandom의 ChaCha20 기반 결과가 평범한 PRNG와 통계적으로 다르지 않음을 보여주는 것이 목적이다.
+	/// 사용자별 고정 시드(SystemRandomSeedBase + u)로 결정론적·재현 가능하게 동작한다.
+	/// </summary>
+	private void RunTop3NoWinStreaksWithSystemRandom(Int32 drawsPerUser)
+	{
+		const Int32 UserCount = 10;
+		const Int32 WinDenominator = 100; // 당첨 확률 1% (Next(WinDenominator) == 0)
+		const Int32 SystemRandomSeedBase = 20260608;
+
+		output.WriteLine(
+			$"[System.Random] 사용자: {UserCount}명  추첨: {drawsPerUser:N0}회  " +
+			$"당첨 확률: {100.0 / WinDenominator:F0}% (Next({WinDenominator}) == 0)");
+		output.WriteLine(new string('-', 64));
+
+		for (Int32 u = 0; u < UserCount; u++)
+		{
+			string userId = $"user-{u:D2}";
+			Random random = new(SystemRandomSeedBase + u);
+
+			Int32[] top3 = [0, 0, 0];
+			Int32 currentStreak = 0;
+			Int32 wins = 0;
+			Int64 totalMisses = 0;
+
+			for (Int64 tick = 1; tick <= drawsPerUser; tick++)
+			{
+				Int32 draw = random.Next(WinDenominator);
+
+				if (draw == 0) // 당첨 → 진행 중이던 미당첨 streak 종료
+				{
+					wins++;
+					RecordStreak(top3, currentStreak);
+					currentStreak = 0;
+				}
+				else // 미당첨 → streak 증가
+				{
+					currentStreak++;
+					totalMisses++;
+				}
+			}
+			// 마지막까지 당첨 없이 끝난 잔여 streak도 후보로 기록한다.
+			RecordStreak(top3, currentStreak);
+
+			Assert.Equal(drawsPerUser, wins + totalMisses);
+			Assert.True(top3[0] >= top3[1] && top3[1] >= top3[2],
+				$"{userId}: TOP3가 내림차순이 아님 [{top3[0]}, {top3[1]}, {top3[2]}]");
 			Assert.InRange(top3[0], 0, drawsPerUser);
 
 			output.WriteLine(
