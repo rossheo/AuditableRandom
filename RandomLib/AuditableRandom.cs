@@ -34,6 +34,9 @@ public static class AuditableRandom
 	private static readonly Int64 _startTimestamp = Stopwatch.GetTimestamp();
 	// 타임스탬프 1틱을 100ns 단위(DateTime.Ticks)로 환산하는 계수.
 	private static readonly double _tickScale = 10_000_000.0 / Stopwatch.Frequency;
+	// Stopwatch가 100ns 해상도(10MHz)면 환산이 항등이라 매 추출의 부동소수 곱을 건너뛴다.
+	// (Windows의 QPC는 일반적으로 10MHz라 이 빠른 경로를 탄다.)
+	private static readonly bool _tickScaleIsIdentity = Stopwatch.Frequency == 10_000_000L;
 	// 빈 userId는 매번 계산하지 않도록 해시를 사전 계산해 둔다.
 	private static readonly UInt64 _emptyUserIdHash = XxHash3.HashToUInt64(ReadOnlySpan<byte>.Empty);
 	private static Int64 _lastTick = 0;
@@ -661,7 +664,9 @@ public static class AuditableRandom
 		{
 			captured = Interlocked.Read(ref _lastTick);
 			// 경과 타임스탬프를 100ns 단위로 환산해 _tickBase(UtcNow.Ticks, 100ns 단위)에 더한다.
-			Int64 elapsed100ns = (Int64)((Stopwatch.GetTimestamp() - _startTimestamp) * _tickScale);
+			// 해상도가 10MHz면 환산이 항등이라 부동소수 곱을 생략한다.
+			Int64 elapsed = Stopwatch.GetTimestamp() - _startTimestamp;
+			Int64 elapsed100ns = _tickScaleIsIdentity ? elapsed : (Int64)(elapsed * _tickScale);
 			next = Math.Max(_tickBase + elapsed100ns, captured + 1);
 		}
 		while (Interlocked.CompareExchange(ref _lastTick, next, captured) != captured);
