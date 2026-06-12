@@ -19,9 +19,13 @@ namespace RandomLib;
 /// <item><description><c>out Int64 tick</c> 생략 시 tick을 버리고, 지정 시 감사 로그 저장용 tick을 받는다.</description></item>
 /// <item><description>정수 범위는 <c>[0, maxExclusive)</c> 또는 <c>[minInclusive, maxExclusive)</c>이며 모듈로 편향이 없다.</description></item>
 /// <item><description>잘못된 범위(max ≤ 0, min ≥ max 등)는 <see cref="ArgumentOutOfRangeException"/>을 던진다.</description></item>
+/// <item><description>tick은 프로세스 시작 시각(UTC)을 기준으로 한 <see cref="DateTime.Ticks"/>(100ns) 단위의
+/// 단조 증가 값이라, 감사 로그의 tick으로 추출이 일어난 시각을 근사 역산할 수 있다.</description></item>
 /// </list>
 /// 정적 메서드는 스레드 안전하다(tick 발급은 원자적).
 /// </remarks>
+// stackalloc 버퍼(블록 64B, nonce 12B)는 읽기 전에 항상 전부 덮어쓰므로 zero-init을 생략한다.
+[SkipLocalsInit]
 public static class AuditableRandom
 {
 	private const Int32 KeySize = 32;
@@ -41,17 +45,39 @@ public static class AuditableRandom
 	private static readonly UInt64 _emptyUserIdHash = XxHash3.HashToUInt64(ReadOnlySpan<byte>.Empty);
 	private static Int64 _lastTick = 0;
 	private static Int32 _initialized;
-	private static byte[]? _seed;
 	// 전역 seed의 키 워드(s4..s11)를 미리 Vector128로 변환해 둔다(매 블록의 LE 읽기 제거).
+	// 키 재료는 이 두 벡터에만 보관한다(평문 seed 배열을 별도로 잔존시키지 않음).
 	private static Vector128<UInt32> _keyVecLow;
 	private static Vector128<UInt32> _keyVecHigh;
+	// 키 벡터가 채워진 뒤 release로 공개되는 플래그. acquire로 읽은 스레드는 키 벡터도 본다.
+	private static bool _seedRegistered;
+
+	/// <summary>
+	/// ChaCha20 seed(32바이트)를 등록한다. 프로세스 수명 동안 한 번만 호출할 수 있다.
+	/// </summary>
+	/// <exception cref="ArgumentNullException">seed가 null인 경우</exception>
+	/// <exception cref="ArgumentException">seed 길이가 32바이트가 아닌 경우</exception>
+	/// <exception cref="InvalidOperationException">이미 초기화된 경우</exception>
+	public static void Initialize(byte[] seed)
+	{
+		ArgumentNullException.ThrowIfNull(seed);
+		Initialize(seed.AsSpan(), 0);
+	}
+
+	/// <inheritdoc cref="Initialize(ReadOnlySpan{byte}, Int64)"/>
+	/// <exception cref="ArgumentNullException">seed가 null인 경우</exception>
+	public static void Initialize(byte[] seed, Int64 resumeAfterTick)
+	{
+		ArgumentNullException.ThrowIfNull(seed);
+		Initialize(seed.AsSpan(), resumeAfterTick);
+	}
 
 	/// <summary>
 	/// ChaCha20 seed(32바이트)를 등록한다. 프로세스 수명 동안 한 번만 호출할 수 있다.
 	/// </summary>
 	/// <exception cref="ArgumentException">seed 길이가 32바이트가 아닌 경우</exception>
 	/// <exception cref="InvalidOperationException">이미 초기화된 경우</exception>
-	public static void Initialize(byte[] seed) =>
+	public static void Initialize(ReadOnlySpan<byte> seed) =>
 		Initialize(seed, 0);
 
 	/// <summary>
@@ -67,9 +93,8 @@ public static class AuditableRandom
 	/// <exception cref="ArgumentException">seed 길이가 32바이트가 아닌 경우</exception>
 	/// <exception cref="ArgumentOutOfRangeException">resumeAfterTick이 음수인 경우</exception>
 	/// <exception cref="InvalidOperationException">이미 초기화된 경우</exception>
-	public static void Initialize(byte[] seed, Int64 resumeAfterTick)
+	public static void Initialize(ReadOnlySpan<byte> seed, Int64 resumeAfterTick)
 	{
-		ArgumentNullException.ThrowIfNull(seed);
 		if (seed.Length != KeySize)
 		{
 			throw new ArgumentException(
@@ -82,24 +107,22 @@ public static class AuditableRandom
 			throw new InvalidOperationException("AuditableRandom은 이미 초기화되었습니다.");
 
 		// 이후 발급되는 tick이 resumeAfterTick을 반드시 초과하도록 바닥값을 끌어올린다.
-		// 시드 공개보다 먼저 수행해, 시드를 읽는 Next가 항상 끌어올려진 tick을 보도록 한다.
+		// 플래그 공개보다 먼저 수행해, 초기화 완료를 본 Next가 항상 끌어올려진 tick을 보도록 한다.
 		InterlockedMax(ref _lastTick, resumeAfterTick);
 
-		// 호출자가 이후 배열을 변경해도 RNG에 영향이 없도록 방어적 복사본을 보관한다.
-		byte[] clone = (byte[])seed.Clone();
+		// seed에서 키 벡터만 뽑아 보관한다. 호출자가 이후 원본 버퍼를 변경해도 RNG에 영향이 없다.
+		// 키 워드 벡터를 플래그 공개 전에 채워, 플래그를 본 스레드가 항상 키 벡터도 보도록 한다.
+		_keyVecLow = Vector128.Create<byte>(seed[..16]).AsUInt32();
+		_keyVecHigh = Vector128.Create<byte>(seed.Slice(16, 16)).AsUInt32();
 
-		// 키 워드 벡터를 _seed 공개 전에 채워, 시드를 본 스레드가 항상 키 벡터도 보도록 한다.
-		_keyVecLow = Vector128.Create<byte>(clone.AsSpan(0, 16)).AsUInt32();
-		_keyVecHigh = Vector128.Create<byte>(clone.AsSpan(16, 16)).AsUInt32();
-
-		Volatile.Write(ref _seed, clone);
+		Volatile.Write(ref _seedRegistered, true);
 	}
 
 	/// <summary>
 	/// <see cref="Initialize(byte[])"/>가 호출되어 seed가 등록되었는지 여부.
 	/// 전역 seed 경로(Next/NextDouble/Shuffle 등)는 등록 후에만 사용할 수 있다.
 	/// </summary>
-	public static bool IsInitialized => Volatile.Read(ref _seed) is not null;
+	public static bool IsInitialized => Volatile.Read(ref _seedRegistered);
 
 	/// <summary>빈 사용자로 <c>[0, maxExclusive)</c> 정수를 뽑는다.</summary>
 	public static Int32 Next(Int32 maxExclusive) =>
@@ -209,13 +232,14 @@ public static class AuditableRandom
 
 	/// <summary>
 	/// userId에 바인딩해 <c>[0, maxExclusive)</c> 부호 없는 정수를 모듈로 편향 없이 뽑고 감사용 <paramref name="tick"/>을 받는다.
+	/// 블록을 앞에서부터 4바이트 big-endian 워드로 읽어 Lemire multiply-shift 거부표본추출을 적용하며,
 	/// 한 블록의 모든 워드가 거부되면 새 블록(새 틱)으로 재시도한다.
 	/// </summary>
 	/// <exception cref="ArgumentOutOfRangeException"><paramref name="maxExclusive"/>가 0인 경우</exception>
 	public static UInt32 NextUInt32(string userId, UInt32 maxExclusive, out Int64 tick)
 	{
 		ArgumentOutOfRangeException.ThrowIfZero(maxExclusive);
-		UInt32 limit = (UInt32.MaxValue / maxExclusive) * maxExclusive;
+		ThrowIfNotInitialized();
 		Span<byte> block = stackalloc byte[BlockSize];
 		while (true)
 		{
@@ -224,8 +248,8 @@ public static class AuditableRandom
 			for (Int32 i = 0; i <= BlockSize - 4; i += 4)
 			{
 				UInt32 raw = BinaryPrimitives.ReadUInt32BigEndian(block.Slice(i, 4));
-				if (raw < limit)
-					return raw % maxExclusive;
+				if (TryReduce(raw, maxExclusive, out UInt32 value))
+					return value;
 			}
 		}
 	}
@@ -267,13 +291,14 @@ public static class AuditableRandom
 
 	/// <summary>
 	/// userId에 바인딩해 <c>[0, maxExclusive)</c> 부호 없는 64비트 정수를 모듈로 편향 없이 뽑고 감사용 <paramref name="tick"/>을 받는다.
+	/// 블록을 앞에서부터 8바이트 big-endian 워드로 읽어 Lemire multiply-shift 거부표본추출을 적용하며,
 	/// 한 블록의 모든 워드가 거부되면 새 블록(새 틱)으로 재시도한다.
 	/// </summary>
 	/// <exception cref="ArgumentOutOfRangeException"><paramref name="maxExclusive"/>가 0인 경우</exception>
 	public static UInt64 NextUInt64(string userId, UInt64 maxExclusive, out Int64 tick)
 	{
 		ArgumentOutOfRangeException.ThrowIfZero(maxExclusive);
-		UInt64 limit = (UInt64.MaxValue / maxExclusive) * maxExclusive;
+		ThrowIfNotInitialized();
 		Span<byte> block = stackalloc byte[BlockSize];
 		while (true)
 		{
@@ -282,8 +307,8 @@ public static class AuditableRandom
 			for (Int32 i = 0; i <= BlockSize - 8; i += 8)
 			{
 				UInt64 raw = BinaryPrimitives.ReadUInt64BigEndian(block.Slice(i, 8));
-				if (raw < limit)
-					return raw % maxExclusive;
+				if (TryReduce(raw, maxExclusive, out UInt64 value))
+					return value;
 			}
 		}
 	}
@@ -318,6 +343,7 @@ public static class AuditableRandom
 	/// <summary>userId에 바인딩해 <c>[0, 1)</c> 배정밀도 실수(53비트 해상도)를 뽑고 감사용 <paramref name="tick"/>을 받는다.</summary>
 	public static double NextDouble(string userId, out Int64 tick)
 	{
+		ThrowIfNotInitialized();
 		Span<byte> block = stackalloc byte[BlockSize];
 		tick = GetUniqueExecutionTicks();
 		FillBlock(userId, tick, block);
@@ -340,6 +366,7 @@ public static class AuditableRandom
 	/// <summary>userId에 바인딩해 <c>[0, 1)</c> 단정밀도 실수(24비트 해상도)를 뽑고 감사용 <paramref name="tick"/>을 받는다.</summary>
 	public static float NextSingle(string userId, out Int64 tick)
 	{
+		ThrowIfNotInitialized();
 		Span<byte> block = stackalloc byte[BlockSize];
 		tick = GetUniqueExecutionTicks();
 		FillBlock(userId, tick, block);
@@ -347,79 +374,130 @@ public static class AuditableRandom
 		return (raw >> 9) * (1.0f / (1U << 23));
 	}
 
+	/// <summary>빈 사용자로 셔플한다. <see cref="Shuffle{T}(string, IList{T})"/> 참조.</summary>
+	public static void Shuffle<T>(IList<T> list) =>
+		Shuffle(string.Empty, list);
+
+	/// <summary>빈 사용자로 셔플한다. <see cref="Shuffle{T}(string, Span{T})"/> 참조.</summary>
+	public static void Shuffle<T>(Span<T> span) =>
+		Shuffle(string.Empty, span);
+
+	/// <summary>빈 사용자로 셔플한다. <see cref="Shuffle{T}(string, T[])"/> 참조.</summary>
+	public static void Shuffle<T>(T[] array) =>
+		Shuffle(string.Empty, array);
+
 	/// <summary>
-	/// Fisher-Yates 셔플. 셔플 결과는 감사/재현 대상이 아니므로(틱을 저장하지 않음)
+	/// userId에 바인딩한 keystream으로 수행하는 Fisher-Yates 셔플.
+	/// 셔플 결과는 감사/재현 대상이 아니므로(틱을 저장하지 않음)
 	/// 한 ChaCha20 블록(16워드)을 여러 스왑에 재사용해 블록 생성을 줄인다.
 	/// </summary>
-	public static void Shuffle<T>(IList<T> list)
+	public static void Shuffle<T>(string userId, IList<T> list)
 	{
 		ArgumentNullException.ThrowIfNull(list);
+
+		// List<T>/배열은 Span 경로로 보내 스왑마다 발생하는 인터페이스 가상 호출을 제거한다.
+		if (list is List<T> concreteList)
+		{
+			Shuffle(userId, CollectionsMarshal.AsSpan(concreteList));
+			return;
+		}
+		if (list is T[] array)
+		{
+			Shuffle(userId, array.AsSpan());
+			return;
+		}
+
 		Int32 n = list.Count;
 		if (n <= 1)
 			return;
 
+		ThrowIfNotInitialized();
 		Span<byte> block = stackalloc byte[BlockSize];
 		Int32 pos = BlockSize; // BlockSize면 다음 워드 요청 시 새 블록(새 틱)으로 채운다.
 
 		for (Int32 i = n - 1; i > 0; --i)
 		{
-			Int32 j = (Int32)NextShuffleIndex((UInt32)(i + 1), block, ref pos);
+			Int32 j = (Int32)NextShuffleIndex(userId, (UInt32)(i + 1), block, ref pos);
 			(list[i], list[j]) = (list[j], list[i]);
 		}
 	}
 
 	/// <summary>
-	/// <see cref="Shuffle{T}(IList{T})"/>의 Span 오버로드. 인터페이스 가상 호출이 없어 더 빠르며,
+	/// <see cref="Shuffle{T}(string, IList{T})"/>의 Span 오버로드. 인터페이스 가상 호출이 없어 더 빠르며,
 	/// 배열·List(<see cref="System.Runtime.InteropServices.CollectionsMarshal.AsSpan{T}(List{T})"/>) 등에 직접 적용할 수 있다.
 	/// </summary>
-	public static void Shuffle<T>(Span<T> span)
+	public static void Shuffle<T>(string userId, Span<T> span)
 	{
 		Int32 n = span.Length;
 		if (n <= 1)
 			return;
 
+		ThrowIfNotInitialized();
 		Span<byte> block = stackalloc byte[BlockSize];
 		Int32 pos = BlockSize;
 
 		for (Int32 i = n - 1; i > 0; --i)
 		{
-			Int32 j = (Int32)NextShuffleIndex((UInt32)(i + 1), block, ref pos);
+			Int32 j = (Int32)NextShuffleIndex(userId, (UInt32)(i + 1), block, ref pos);
 			(span[i], span[j]) = (span[j], span[i]);
 		}
 	}
 
 	/// <summary>
-	/// <see cref="Shuffle{T}(Span{T})"/>의 배열 오버로드. 배열 인자가 IList/Span 오버로드 사이에서
+	/// <see cref="Shuffle{T}(string, Span{T})"/>의 배열 오버로드. 배열 인자가 IList/Span 오버로드 사이에서
 	/// 모호해지지 않도록 명시적으로 제공하며, null을 거부한다.
 	/// </summary>
-	public static void Shuffle<T>(T[] array)
+	public static void Shuffle<T>(string userId, T[] array)
 	{
 		ArgumentNullException.ThrowIfNull(array);
-		Shuffle(array.AsSpan());
+		Shuffle(userId, array.AsSpan());
 	}
 
 	/// <summary>
 	/// 셔플용 [0, range) 거부표본 인덱스를 뽑는다. 64바이트 블록 버퍼(block)와 위치(pos)를
 	/// 여러 스왑에 재사용하며, 소진/거부 시 새 틱으로 블록을 다시 채운다.
 	/// </summary>
-	private static UInt32 NextShuffleIndex(UInt32 range, Span<byte> block, ref Int32 pos)
+	private static UInt32 NextShuffleIndex(string userId, UInt32 range, Span<byte> block, ref Int32 pos)
 	{
-		UInt32 limit = (UInt32.MaxValue / range) * range;
-
-		// NextUInt32와 동일한 거부 표본추출(모듈로 편향 없음). 거부/소진 시 새 워드로 진행.
+		// NextUInt32와 동일한 Lemire 거부 표본추출(모듈로 편향 없음). 거부/소진 시 새 워드로 진행.
 		while (true)
 		{
 			if (pos > BlockSize - 4)
 			{
-				FillBlock(string.Empty, GetUniqueExecutionTicks(), block);
+				FillBlock(userId, GetUniqueExecutionTicks(), block);
 				pos = 0;
 			}
 
 			UInt32 raw = BinaryPrimitives.ReadUInt32BigEndian(block.Slice(pos, 4));
 			pos += 4;
-			if (raw < limit)
-				return raw % range;
+			if (TryReduce(raw, range, out UInt32 value))
+				return value;
 		}
+	}
+
+	/// <summary>
+	/// Lemire multiply-shift 거부표본추출로 raw를 <c>[0, range)</c>에 편향 없이 사상한다.
+	/// 일반 경로는 곱셈 1회뿐이고, 모듈로는 드문 거부 후보 경로(low &lt; range)에서만 1회 수행한다.
+	/// raw가 거부되면 false를 반환한다(호출자가 다음 워드로 재시도).
+	/// 경계 케이스 단위 테스트를 위해 internal로 공개한다.
+	/// </summary>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	internal static bool TryReduce(UInt32 raw, UInt32 range, out UInt32 value)
+	{
+		UInt64 product = (UInt64)raw * range;
+		UInt32 low = (UInt32)product;
+		value = (UInt32)(product >> 32);
+		// threshold = 2^32 mod range. low ≥ range면 threshold(< range)보다 크므로 즉시 수락.
+		return low >= range || low >= unchecked(0u - range) % range;
+	}
+
+	/// <inheritdoc cref="TryReduce(UInt32, UInt32, out UInt32)"/>
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	internal static bool TryReduce(UInt64 raw, UInt64 range, out UInt64 value)
+	{
+		value = Math.BigMul(raw, range, out UInt64 low);
+		// threshold = 2^64 mod range.
+		return low >= range || low >= unchecked(0UL - range) % range;
 	}
 
 	/// <summary>
@@ -431,7 +509,8 @@ public static class AuditableRandom
 	/// <exception cref="InvalidOperationException">Initialize()가 호출되지 않은 경우</exception>
 	public static byte[] GetBlockChaCha20(string userId, out Int64 tick)
 	{
-		byte[] block = new byte[BlockSize];
+		// 64바이트 전부 keystream으로 덮어쓰므로 zero-init을 생략한다.
+		byte[] block = GC.AllocateUninitializedArray<byte>(BlockSize);
 		GetBlockChaCha20(userId, block, out tick);
 		return block;
 	}
@@ -448,6 +527,7 @@ public static class AuditableRandom
 	public static void GetBlockChaCha20(string userId, Span<byte> destination, out Int64 tick)
 	{
 		ThrowIfBlockBufferTooSmall(destination);
+		ThrowIfNotInitialized();
 		tick = GetUniqueExecutionTicks();
 		FillBlock(userId, tick, destination);
 	}
@@ -458,10 +538,11 @@ public static class AuditableRandom
 	/// </summary>
 	/// <param name="userId">생성 당시 사용한 ApplicationUser.Id 원본값</param>
 	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
+	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
 	/// <exception cref="InvalidOperationException">Initialize()가 호출되지 않은 경우</exception>
 	public static byte[] GetBlockChaCha20(string userId, Int64 tick)
 	{
-		byte[] block = new byte[BlockSize];
+		byte[] block = GC.AllocateUninitializedArray<byte>(BlockSize);
 		GetBlockChaCha20(userId, tick, block);
 		return block;
 	}
@@ -472,10 +553,12 @@ public static class AuditableRandom
 	/// <param name="userId">생성 당시 사용한 ApplicationUser.Id 원본값</param>
 	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
 	/// <param name="destination">최소 64바이트 출력 버퍼</param>
+	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
 	/// <exception cref="ArgumentException">destination이 64바이트 미만인 경우</exception>
 	/// <exception cref="InvalidOperationException">Initialize()가 호출되지 않은 경우</exception>
 	public static void GetBlockChaCha20(string userId, Int64 tick, Span<byte> destination)
 	{
+		ArgumentOutOfRangeException.ThrowIfNegative(tick);
 		ThrowIfBlockBufferTooSmall(destination);
 		FillBlock(userId, tick, destination);
 	}
@@ -487,10 +570,11 @@ public static class AuditableRandom
 	/// <param name="seed">생성 당시 사용한 32바이트 seed</param>
 	/// <param name="userId">생성 당시 사용한 ApplicationUser.Id 원본값</param>
 	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
+	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
 	/// <exception cref="ArgumentException">seed 길이가 32바이트가 아닌 경우</exception>
 	public static byte[] GetBlockChaCha20(byte[] seed, string userId, Int64 tick)
 	{
-		byte[] block = new byte[BlockSize];
+		byte[] block = GC.AllocateUninitializedArray<byte>(BlockSize);
 		GetBlockChaCha20(seed, userId, tick, block);
 		return block;
 	}
@@ -503,9 +587,11 @@ public static class AuditableRandom
 	/// <param name="userId">생성 당시 사용한 ApplicationUser.Id 원본값</param>
 	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
 	/// <param name="destination">최소 64바이트 출력 버퍼</param>
+	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
 	/// <exception cref="ArgumentException">seed가 32바이트가 아니거나 destination이 64바이트 미만인 경우</exception>
 	public static void GetBlockChaCha20(byte[] seed, string userId, Int64 tick, Span<byte> destination)
 	{
+		ArgumentOutOfRangeException.ThrowIfNegative(tick);
 		ArgumentNullException.ThrowIfNull(seed);
 		if (seed.Length != KeySize)
 		{
@@ -515,6 +601,108 @@ public static class AuditableRandom
 		}
 		ThrowIfBlockBufferTooSmall(destination);
 		FillBlock(seed, userId, tick, destination);
+	}
+
+	/// <summary>
+	/// userId에 바인딩한 keystream으로 <paramref name="destination"/> 전체(임의 길이)를 새 틱으로 채운다.
+	/// 64바이트 블록마다 counter를 1씩 증가시키며 생성하므로(RFC 8439 방식),
+	/// 등록된 seed와 (userId, tick, 길이)만으로 전체 내용을 재현할 수 있다.
+	/// 첫 64바이트는 같은 (userId, tick)의 <see cref="GetBlockChaCha20(string, Int64)"/>와 동일하다.
+	/// </summary>
+	/// <param name="userId">ApplicationUser.Id 원본값</param>
+	/// <param name="destination">출력 버퍼(길이 제한 없음)</param>
+	/// <param name="tick">생성에 사용된 고유 틱 — Audit Log 저장용</param>
+	/// <exception cref="InvalidOperationException">Initialize()가 호출되지 않은 경우</exception>
+	public static void Fill(string userId, Span<byte> destination, out Int64 tick)
+	{
+		ThrowIfNotInitialized();
+		tick = GetUniqueExecutionTicks();
+		Fill(userId, tick, destination);
+	}
+
+	/// <summary>
+	/// 저장된 (tick, userId)로 keystream을 <paramref name="destination"/> 전체에 결정론적으로 재생성한다(Audit 재현용).
+	/// 생성 당시와 동일한 seed가 등록되어 있어야 같은 결과가 나온다.
+	/// </summary>
+	/// <param name="userId">생성 당시 사용한 ApplicationUser.Id 원본값</param>
+	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
+	/// <param name="destination">출력 버퍼 — 생성 당시 길이 이하의 어떤 길이든 동일한 접두(prefix)를 얻는다</param>
+	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
+	/// <exception cref="InvalidOperationException">Initialize()가 호출되지 않은 경우</exception>
+	public static void Fill(string userId, Int64 tick, Span<byte> destination)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(tick);
+		ThrowIfNotInitialized();
+
+		Span<byte> nonce = stackalloc byte[12];
+		BinaryPrimitives.WriteInt64BigEndian(nonce[..8], tick);
+		UInt32 counter = WriteUserIdHash(userId, nonce[8..]);
+
+		FillStreamCore(_keyVecLow, _keyVecHigh, counter, nonce, destination);
+	}
+
+	/// <summary>
+	/// 명시한 seed로 keystream을 <paramref name="destination"/> 전체에 결정론적으로 재생성한다(과거 시드 재현용).
+	/// 전역 상태와 무관하게 동작하므로 Initialize() 없이도 호출할 수 있다.
+	/// </summary>
+	/// <param name="seed">생성 당시 사용한 32바이트 seed</param>
+	/// <param name="userId">생성 당시 사용한 ApplicationUser.Id 원본값</param>
+	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
+	/// <param name="destination">출력 버퍼 — 생성 당시 길이 이하의 어떤 길이든 동일한 접두(prefix)를 얻는다</param>
+	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
+	/// <exception cref="ArgumentException">seed 길이가 32바이트가 아닌 경우</exception>
+	public static void Fill(byte[] seed, string userId, Int64 tick, Span<byte> destination)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(tick);
+		ArgumentNullException.ThrowIfNull(seed);
+		if (seed.Length != KeySize)
+		{
+			throw new ArgumentException(
+				$"seed는 {KeySize}바이트여야 합니다. (실제: {seed.Length}바이트)",
+				nameof(seed));
+		}
+
+		Span<byte> nonce = stackalloc byte[12];
+		BinaryPrimitives.WriteInt64BigEndian(nonce[..8], tick);
+		UInt32 counter = WriteUserIdHash(userId, nonce[8..]);
+
+		Vector128<UInt32> keyLow = Vector128.Create<byte>(seed.AsSpan(0, 16)).AsUInt32();
+		Vector128<UInt32> keyHigh = Vector128.Create<byte>(seed.AsSpan(16, 16)).AsUInt32();
+		FillStreamCore(keyLow, keyHigh, counter, nonce, destination);
+	}
+
+	/// <summary>
+	/// destination을 64바이트 블록 단위로 채우고, 블록마다 counter를 1씩 증가시킨다.
+	/// 64바이트 미만의 꼬리는 임시 블록을 생성해 앞부분만 복사한다.
+	/// </summary>
+	private static void FillStreamCore(Vector128<UInt32> keyLow, Vector128<UInt32> keyHigh, UInt32 counter,
+		ReadOnlySpan<byte> nonce, Span<byte> destination)
+	{
+		while (destination.Length >= BlockSize)
+		{
+			BlockCore(keyLow, keyHigh, counter, nonce, destination);
+			destination = destination[BlockSize..];
+			counter = unchecked(counter + 1);
+		}
+
+		if (!destination.IsEmpty)
+		{
+			Span<byte> tail = stackalloc byte[BlockSize];
+			BlockCore(keyLow, keyHigh, counter, nonce, tail);
+			tail[..destination.Length].CopyTo(destination);
+		}
+	}
+
+	/// <summary>
+	/// 전역 seed 미등록이면 던진다. tick을 발급하는 경로는 발급 전에 이 검사를 통과해야 한다:
+	/// 플래그의 acquire 읽기가 성공하면 Initialize의 resume 바닥값 적용(InterlockedMax)이
+	/// 그보다 먼저 완료된 것이므로, 이후 발급되는 tick이 반드시 resumeAfterTick을 초과한다.
+	/// (검사 없이 tick을 먼저 발급하면 Initialize와 경합 시 바닥값 미적용 tick이 나올 수 있다.)
+	/// </summary>
+	private static void ThrowIfNotInitialized()
+	{
+		if (!Volatile.Read(ref _seedRegistered))
+			throw new InvalidOperationException("AuditableRandom.Initialize()를 먼저 호출해야 합니다.");
 	}
 
 	private static void ThrowIfBlockBufferTooSmall(Span<byte> destination)
@@ -532,8 +720,7 @@ public static class AuditableRandom
 	/// </summary>
 	private static void FillBlock(string userId, Int64 tick, Span<byte> destination)
 	{
-		if (Volatile.Read(ref _seed) is null)
-			throw new InvalidOperationException("AuditableRandom.Initialize()를 먼저 호출해야 합니다.");
+		ThrowIfNotInitialized();
 
 		Span<byte> nonce = stackalloc byte[12];
 		BinaryPrimitives.WriteInt64BigEndian(nonce[..8], tick);

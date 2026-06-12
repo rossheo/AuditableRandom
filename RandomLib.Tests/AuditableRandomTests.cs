@@ -104,6 +104,12 @@ public class ReproducibilityTests
 		byte[] b = AuditableRandom.GetBlockChaCha20(other, "abc", 1);
 		Assert.NotEqual(a, b);
 	}
+
+	[Fact]
+	public void EmptyInput_XxHash3_MatchesAuditSpecConstant() =>
+		// docs/AUDIT.md 2.1절에 박은 빈 userId 해시 상수와 실제 구현이 일치해야 한다.
+		Assert.Equal(0x2D06800538D394C2UL,
+			System.IO.Hashing.XxHash3.HashToUInt64(ReadOnlySpan<byte>.Empty));
 }
 
 /// <summary>
@@ -214,6 +220,41 @@ public class UniformDistributionTests(ITestOutputHelper output)
 		WriteQuality(chiSq, Buckets - 1, counts, expected);
 		Assert.True(chiSq < ChiSq9Df,
 			$"double 버킷 균등성 실패: χ²={chiSq:F2} > 임계값 {ChiSq9Df} (9 df, α=0.001)");
+	}
+
+	[Fact]
+	public void LemireDerivation_ChiSquared_IsUniform()
+	{
+		// NextUInt32와 동일한 Lemire 유도(내부 TryReduce)를 keystream에 적용해
+		// 유도식 자체가 편향을 만들지 않는지 검정한다(기존 검정들은 % 버킷을 직접 적용).
+		const Int32 Buckets = 10;
+		const Int32 Samples = 10_000;
+		double expected = (double)Samples / Buckets;
+
+		Int32[] counts = new Int32[Buckets];
+		byte[] seed = Seed();
+		Span<byte> block = stackalloc byte[64];
+		for (Int64 tick = 1; tick <= Samples; tick++)
+		{
+			AuditableRandom.GetBlockChaCha20(seed, "lemire-dist", tick, block);
+			for (Int32 i = 0; i <= 64 - 4; i += 4)
+			{
+				UInt32 raw = BinaryPrimitives.ReadUInt32BigEndian(block.Slice(i, 4));
+				if (AuditableRandom.TryReduce(raw, (UInt32)Buckets, out UInt32 value))
+				{
+					counts[value]++;
+					break;
+				}
+			}
+		}
+
+		double chiSq = counts.Sum(c => Math.Pow(c - expected, 2) / expected);
+		output.WriteLine($"샘플: {Samples:N0}  버킷: {Buckets}  기대값/버킷: {expected:F0}");
+		output.WriteLine($"버킷별 카운트: [{string.Join(", ", counts)}]");
+		output.WriteLine($"χ²={chiSq:F3}  임계값={ChiSq9Df} (9 df, α=0.001)  여유={ChiSq9Df - chiSq:F3}");
+		WriteQuality(chiSq, Buckets - 1, counts, expected);
+		Assert.True(chiSq < ChiSq9Df,
+			$"Lemire 유도 균등성 실패: χ²={chiSq:F2} > 임계값 {ChiSq9Df} (9 df, α=0.001)");
 	}
 
 	[Fact]
@@ -434,12 +475,11 @@ public class NoWinStreakTests(ITestOutputHelper output)
 	/// <summary>
 	/// 명시 seed 경로로 <c>Next(userId, maxExclusive)</c>와 동일한 <c>[0, maxExclusive)</c> 값을 뽑는다.
 	/// 전역 <see cref="AuditableRandom.NextUInt32(string, UInt32, out Int64)"/>와 똑같은
-	/// 거부표본추출(모듈로 편향 없음)을 한 블록의 16워드에 적용한다.
+	/// Lemire multiply-shift 거부표본추출(모듈로 편향 없음)을 한 블록의 16워드에 적용한다.
 	/// Initialize() 없이 결정론적·재현 가능하게 실행되도록 seed와 tick을 직접 받는다.
 	/// </summary>
 	private static UInt32 NextValue(byte[] seed, string userId, Int64 tick, UInt32 maxExclusive)
 	{
-		UInt32 limit = (UInt32.MaxValue / maxExclusive) * maxExclusive;
 		Span<byte> block = stackalloc byte[64];
 		while (true)
 		{
@@ -447,8 +487,10 @@ public class NoWinStreakTests(ITestOutputHelper output)
 			for (Int32 i = 0; i <= 64 - 4; i += 4)
 			{
 				UInt32 raw = BinaryPrimitives.ReadUInt32BigEndian(block.Slice(i, 4));
-				if (raw < limit)
-					return raw % maxExclusive;
+				UInt64 product = (UInt64)raw * maxExclusive;
+				UInt32 low = (UInt32)product;
+				if (low >= maxExclusive || low >= unchecked(0u - maxExclusive) % maxExclusive)
+					return (UInt32)(product >> 32);
 			}
 			// 한 블록의 16워드가 모두 거부될 확률은 사실상 0이지만, 전역 NextUInt32와 동형으로
 			// 다음 tick에서 결정론적으로 재시도한다(벽시계 대신 tick+1로 진행).
@@ -524,6 +566,24 @@ public class InitializeTests
 		Int32[] spanResult = span.ToArray();
 		Assert.Equal(Enumerable.Range(0, 250), spanResult.OrderBy(x => x));
 
+		// userId 바인딩 셔플 오버로드도 유효 순열을 보존해야 한다.
+		List<Int32> userItems = Enumerable.Range(0, 150).ToList();
+		AuditableRandom.Shuffle("shuffle-user", userItems);
+		Assert.Equal(Enumerable.Range(0, 150), userItems.OrderBy(x => x));
+
+		// Fill 라운드트립: 전역 경로로 생성한 임의 길이 keystream을
+		// (seed, userId, tick)만으로 동일하게 재현한다(멀티블록 + 64바이트 미만 꼬리 포함).
+		byte[] fillOut = new byte[150];
+		AuditableRandom.Fill("fill-user", fillOut, out Int64 fillTick);
+		Assert.True(fillTick > resume);
+		byte[] fillRepro = new byte[150];
+		AuditableRandom.Fill(seed, "fill-user", fillTick, fillRepro);
+		Assert.Equal(fillRepro, fillOut);
+		// 전역 키 재현 오버로드도 명시 seed 경로와 일치해야 한다.
+		byte[] fillReproGlobal = new byte[150];
+		AuditableRandom.Fill("fill-user", fillTick, fillReproGlobal);
+		Assert.Equal(fillRepro, fillReproGlobal);
+
 		// 부호 없는 범위 오버로드: 결과가 [min, max) 안에 있고 tick은 resume를 초과해야 한다.
 		for (Int32 k = 0; k < 100; k++)
 		{
@@ -539,19 +599,20 @@ public class InitializeTests
 		// 저장된 seed로 재현하는 실제 감사 경로(전역 상태와 무관)를 검증한다 — 이 라이브러리의 핵심 계약.
 		for (Int32 k = 0; k < 50; k++)
 		{
-			const Int32 Max = 1000;
-			Int32 drawn = AuditableRandom.Next("audit-user", Max, out Int64 drawTick);
+			const UInt32 Max = 1000;
+			Int32 drawn = AuditableRandom.Next("audit-user", (Int32)Max, out Int64 drawTick);
 
-			// 재현: 저장한 seed로 동일 블록을 만들고 생성 당시와 동일한 거부표본 스캔을 적용.
+			// 재현: 저장한 seed로 동일 블록을 만들고 생성 당시와 동일한 Lemire 거부표본 스캔을 적용.
 			byte[] block = AuditableRandom.GetBlockChaCha20(seed, "audit-user", drawTick);
-			UInt32 limit = (UInt32.MaxValue / (UInt32)Max) * (UInt32)Max;
 			Int32 reproduced = -1;
 			for (Int32 i = 0; i <= 64 - 4; i += 4)
 			{
 				UInt32 raw = BinaryPrimitives.ReadUInt32BigEndian(block.AsSpan(i, 4));
-				if (raw < limit)
+				UInt64 product = (UInt64)raw * Max;
+				UInt32 low = (UInt32)product;
+				if (low >= Max || low >= unchecked(0u - Max) % Max)
 				{
-					reproduced = (Int32)(raw % (UInt32)Max);
+					reproduced = (Int32)(product >> 32);
 					break;
 				}
 			}
@@ -599,6 +660,154 @@ public class UnsignedRangeValidationTests
 	public void GetBlockChaCha20_NullUserId_Throws() =>
 		// 명시 seed 경로는 Initialize와 무관하게 WriteUserIdHash에서 null을 거부한다.
 		Assert.Throws<ArgumentNullException>(() => AuditableRandom.GetBlockChaCha20(new byte[32], null!, 1L));
+
+	[Fact]
+	public void GetBlockChaCha20_NegativeTick_Throws() =>
+		// 생성 경로는 음수 tick을 발급하지 않으므로 재현 경로의 음수는 손상된 감사 로그다.
+		Assert.Throws<ArgumentOutOfRangeException>(() => AuditableRandom.GetBlockChaCha20(new byte[32], "u", -1L));
+}
+
+/// <summary>
+/// Initialize 인자 검증. 검증 실패는 1회 한정 초기화 기회를 소모하지 않아야 하므로
+/// (검증이 CAS보다 먼저 수행됨) 전역 초기화 여부와 무관하게 독립 실행된다.
+/// </summary>
+public class InitializeValidationTests
+{
+	[Fact]
+	public void InvalidArguments_Throw_WithoutConsumingInit()
+	{
+		Assert.Throws<ArgumentNullException>(() => AuditableRandom.Initialize((byte[])null!));
+		Assert.Throws<ArgumentException>(() => AuditableRandom.Initialize(new byte[31]));          // 배열 오버로드
+		Assert.Throws<ArgumentException>(() => AuditableRandom.Initialize(new byte[33].AsSpan())); // Span 오버로드
+		Assert.Throws<ArgumentOutOfRangeException>(() => AuditableRandom.Initialize(new byte[32].AsSpan(), -1L));
+	}
+}
+
+/// <summary>
+/// Lemire multiply-shift 축소(TryReduce)의 경계 동작을 고정한다.
+/// 순수 함수라 전역 상태와 무관하게 독립 실행된다.
+/// </summary>
+public class TryReduceTests
+{
+	[Fact]
+	public void Range1_AlwaysAcceptsAsZero()
+	{
+		foreach (UInt32 raw in new UInt32[] { 0u, 1u, 12345u, UInt32.MaxValue })
+		{
+			Assert.True(AuditableRandom.TryReduce(raw, 1u, out UInt32 v));
+			Assert.Equal(0u, v);
+		}
+		foreach (UInt64 raw in new UInt64[] { 0UL, 1UL, 12345UL, UInt64.MaxValue })
+		{
+			Assert.True(AuditableRandom.TryReduce(raw, 1UL, out UInt64 v));
+			Assert.Equal(0UL, v);
+		}
+	}
+
+	[Fact]
+	public void PowerOfTwoRange_NeverRejects_MapsToHighBits()
+	{
+		// 2^k 범위는 threshold = 2^N mod 2^k = 0이라 어떤 raw도 거부되지 않고 상위 비트로 사상된다.
+		foreach (UInt32 raw in new UInt32[] { 0u, 1u, 0x7FFFFFFFu, 0x80000000u, UInt32.MaxValue })
+		{
+			Assert.True(AuditableRandom.TryReduce(raw, 1u << 31, out UInt32 v));
+			Assert.Equal(raw >> 1, v);
+		}
+		foreach (UInt64 raw in new UInt64[] { 0UL, 1UL, UInt64.MaxValue })
+		{
+			Assert.True(AuditableRandom.TryReduce(raw, 1UL << 63, out UInt64 v));
+			Assert.Equal(raw >> 1, v);
+		}
+	}
+
+	[Fact]
+	public void RejectionBoundary_Range3()
+	{
+		// range=3: threshold = 2^32 mod 3 = 1. product 하위 워드(low)가 1 미만인 raw만 거부된다.
+		Assert.False(AuditableRandom.TryReduce(0u, 3u, out _));          // low=0 → 거부
+		Assert.True(AuditableRandom.TryReduce(1u, 3u, out UInt32 v32));  // low=3 → 수락
+		Assert.Equal(0u, v32);
+		Assert.True(AuditableRandom.TryReduce(UInt32.MaxValue, 3u, out v32));
+		Assert.Equal(2u, v32);
+
+		// 64비트도 threshold = 2^64 mod 3 = 1로 동일한 경계.
+		Assert.False(AuditableRandom.TryReduce(0UL, 3UL, out _));
+		Assert.True(AuditableRandom.TryReduce(1UL, 3UL, out UInt64 v64));
+		Assert.Equal(0UL, v64);
+		Assert.True(AuditableRandom.TryReduce(UInt64.MaxValue, 3UL, out v64));
+		Assert.Equal(2UL, v64);
+	}
+
+	[Fact]
+	public void AcceptedValues_AlwaysInRange()
+	{
+		Random rng = new(20260612); // 결정론적 재현을 위한 고정 시드
+		UInt32[] ranges32 = [2u, 3u, 7u, 100u, 1000u, 1u << 20, UInt32.MaxValue];
+		UInt64[] ranges64 = [2UL, 3UL, 1000UL, 1UL << 40, UInt64.MaxValue];
+		for (Int32 k = 0; k < 10_000; k++)
+		{
+			UInt32 raw32 = (UInt32)rng.NextInt64(0, 1L << 32);
+			foreach (UInt32 range in ranges32)
+			{
+				if (AuditableRandom.TryReduce(raw32, range, out UInt32 v))
+					Assert.True(v < range, $"raw={raw32} range={range} value={v}");
+			}
+
+			UInt64 raw64 = (UInt64)rng.NextInt64() ^ ((UInt64)rng.NextInt64() << 32);
+			foreach (UInt64 range in ranges64)
+			{
+				if (AuditableRandom.TryReduce(raw64, range, out UInt64 v))
+					Assert.True(v < range, $"raw={raw64} range={range} value={v}");
+			}
+		}
+	}
+}
+
+/// <summary>
+/// 임의 길이 Fill의 멀티블록 규약(블록당 counter+1, 접두 일관성)을 검증한다.
+/// 명시 seed 경로라 Initialize() 없이 독립 실행된다.
+/// </summary>
+public class FillTests
+{
+	private static byte[] Seed()
+	{
+		byte[] s = new byte[32];
+		for (Int32 i = 0; i < 32; i++)
+			s[i] = (byte)(0x90 + i);
+		return s;
+	}
+
+	[Fact]
+	public void FirstBlock_MatchesGetBlock()
+	{
+		byte[] seed = Seed();
+		byte[] block = AuditableRandom.GetBlockChaCha20(seed, "fill-user", 42L);
+
+		byte[] filled = new byte[200];
+		AuditableRandom.Fill(seed, "fill-user", 42L, filled);
+
+		Assert.Equal(block, filled[..64]);
+		// 두 번째 블록(counter+1)은 첫 블록과 달라야 한다.
+		Assert.NotEqual(block, filled[64..128]);
+	}
+
+	[Fact]
+	public void ShorterLength_IsPrefixOfLonger()
+	{
+		byte[] seed = Seed();
+		byte[] longOut = new byte[300];
+		AuditableRandom.Fill(seed, "fill-user", 7L, longOut);
+
+		byte[] shortOut = new byte[100]; // 64바이트 미만 꼬리 경로 포함
+		AuditableRandom.Fill(seed, "fill-user", 7L, shortOut);
+
+		Assert.Equal(longOut[..100], shortOut);
+	}
+
+	[Fact]
+	public void NegativeTick_Throws() =>
+		Assert.Throws<ArgumentOutOfRangeException>(() =>
+			AuditableRandom.Fill(Seed(), "u", -1L, new byte[10]));
 }
 
 /// <summary>

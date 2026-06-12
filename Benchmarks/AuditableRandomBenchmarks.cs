@@ -73,7 +73,7 @@ public class AuditableRandomBenchmarks
     [Benchmark]
     public float NextSingle_EmptyUserId() => AuditableRandom.NextSingle();
 
-    // ── AuditableRandom: 비어 있지 않은 userId (SHA-256 경로) ─────────────────
+    // ── AuditableRandom: 비어 있지 않은 userId (xxHash3 경로) ─────────────────
 
     [Benchmark]
     public int Next_WithUserId() => AuditableRandom.Next("user-0000000000000001", 1_000_000);
@@ -99,6 +99,7 @@ public class AuditableRandomBenchmarks
 
     // ── 셔플 ─────────────────────────────────────────────────────────────────
 
+    // List<T>는 IList 오버로드로 들어가도 내부에서 CollectionsMarshal.AsSpan 빠른 경로를 탄다.
     [Benchmark]
     public void Shuffle100() => AuditableRandom.Shuffle(_list100);
 }
