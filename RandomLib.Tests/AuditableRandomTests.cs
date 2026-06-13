@@ -595,6 +595,33 @@ public class InitializeTests
 			Assert.InRange(ul, 500_000_000_000UL, 500_000_000_099UL);
 		}
 
+		// 전 범위 오버로드: 거부 없이 블록 앞 4/8바이트를 그대로 쓰므로 저장된 tick만으로 직접 재현된다.
+		UInt32 u32Full = AuditableRandom.NextUInt32("full-user", out Int64 u32Tick);
+		Assert.True(u32Tick > resume);
+		byte[] u32Block = AuditableRandom.GetBlockChaCha20(seed, "full-user", u32Tick);
+		Assert.Equal(BinaryPrimitives.ReadUInt32BigEndian(u32Block), u32Full);
+
+		UInt64 u64Full = AuditableRandom.NextUInt64("full-user", out Int64 u64Tick);
+		Assert.True(u64Tick > resume);
+		byte[] u64Block = AuditableRandom.GetBlockChaCha20(seed, "full-user", u64Tick);
+		Assert.Equal(BinaryPrimitives.ReadUInt64BigEndian(u64Block), u64Full);
+
+		// 무인자 오버로드(빈 userId)도 같은 계약을 따른다.
+		UInt64 u64Empty = AuditableRandom.NextUInt64(out Int64 u64EmptyTick);
+		byte[] u64EmptyBlock = AuditableRandom.GetBlockChaCha20(seed, string.Empty, u64EmptyTick);
+		Assert.Equal(BinaryPrimitives.ReadUInt64BigEndian(u64EmptyBlock), u64Empty);
+
+		// 부호 있는 전 범위 오버로드: 전 범위 부호 없는 추출의 비트 패턴을 2의 보수로 재해석한다.
+		Int32 i32Full = AuditableRandom.NextInt32("full-user", out Int64 i32Tick);
+		Assert.True(i32Tick > resume);
+		byte[] i32Block = AuditableRandom.GetBlockChaCha20(seed, "full-user", i32Tick);
+		Assert.Equal(unchecked((Int32)BinaryPrimitives.ReadUInt32BigEndian(i32Block)), i32Full);
+
+		Int64 i64Full = AuditableRandom.NextInt64("full-user", out Int64 i64Tick);
+		Assert.True(i64Tick > resume);
+		byte[] i64Block = AuditableRandom.GetBlockChaCha20(seed, "full-user", i64Tick);
+		Assert.Equal(unchecked((Int64)BinaryPrimitives.ReadUInt64BigEndian(i64Block)), i64Full);
+
 		// 감사 라운드트립: Next/NextDouble로 뽑은 값을 (seed, userId, tick)만으로 동일하게 재현한다.
 		// 저장된 seed로 재현하는 실제 감사 경로(전역 상태와 무관)를 검증한다 — 이 라이브러리의 핵심 계약.
 		for (Int32 k = 0; k < 50; k++)

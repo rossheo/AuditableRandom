@@ -47,7 +47,9 @@ byte[] past = AuditableRandom.GetBlockChaCha20(oldSeed, "user-123", tick);
 |---|---|
 | `Initialize(seed[, resumeAfterTick])` | 32바이트 seed 등록(프로세스당 1회). `byte[]`/`ReadOnlySpan<byte>` 모두 지원 |
 | `Next(...)` / `NextInt64(...)` | 부호 있는 정수 `[0, max)` 또는 `[min, max)` |
+| `NextInt32(...)` / `NextInt64(...)` | 부호 있는 정수 전 범위 `[T.MinValue, T.MaxValue]` (무인자 `Next()`가 `System.Random.Next()`(음수 없음)와 혼동되지 않도록 `NextInt32`로 명명) |
 | `NextUInt32(...)` / `NextUInt64(...)` | 부호 없는 정수 `[0, max)` 또는 `[min, max)` |
+| `NextUInt32(...)` / `NextUInt64(...)` (전 범위) | 부호 없는 정수 전 범위 `[0, 2ⁿ)` |
 | `NextDouble(...)` / `NextSingle(...)` | `[0, 1)` 부동소수 |
 | `Shuffle([userId,] IList<T> \| Span<T> \| T[])` | Fisher-Yates 셔플(감사 대상 아님) |
 | `GetBlockChaCha20(...)` | 64바이트 keystream 블록 생성/재현 |

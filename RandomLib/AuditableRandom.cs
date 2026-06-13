@@ -167,6 +167,44 @@ public static class AuditableRandom
 		return (Int32)((Int64)minInclusive + value);
 	}
 
+	/// <summary>빈 사용자로 전체 범위 <c>[Int32.MinValue, Int32.MaxValue]</c> 정수를 뽑는다.</summary>
+	public static Int32 NextInt32() =>
+		NextInt32(string.Empty, out _);
+
+	/// <summary>빈 사용자로 전체 범위 <c>[Int32.MinValue, Int32.MaxValue]</c> 정수를 뽑고 감사용 tick을 받는다.</summary>
+	public static Int32 NextInt32(out Int64 tick) =>
+		NextInt32(string.Empty, out tick);
+
+	/// <summary>userId에 바인딩해 전체 범위 <c>[Int32.MinValue, Int32.MaxValue]</c> 정수를 뽑는다.</summary>
+	public static Int32 NextInt32(string userId) =>
+		NextInt32(userId, out _);
+
+	/// <summary>
+	/// userId에 바인딩해 전체 범위 <c>[Int32.MinValue, Int32.MaxValue]</c> 정수를 뽑고 감사용 <paramref name="tick"/>을 받는다.
+	/// 전 범위 <see cref="NextUInt32(string, out Int64)"/>의 비트 패턴을 부호 있는 정수로 그대로 재해석한다(2의 보수, 무편향).
+	/// </summary>
+	public static Int32 NextInt32(string userId, out Int64 tick) =>
+		unchecked((Int32)NextUInt32(userId, out tick));
+
+	/// <summary>빈 사용자로 전체 범위 <c>[Int64.MinValue, Int64.MaxValue]</c> 64비트 정수를 뽑는다.</summary>
+	public static Int64 NextInt64() =>
+		NextInt64(string.Empty, out _);
+
+	/// <summary>빈 사용자로 전체 범위 <c>[Int64.MinValue, Int64.MaxValue]</c> 64비트 정수를 뽑고 감사용 tick을 받는다.</summary>
+	public static Int64 NextInt64(out Int64 tick) =>
+		NextInt64(string.Empty, out tick);
+
+	/// <summary>userId에 바인딩해 전체 범위 <c>[Int64.MinValue, Int64.MaxValue]</c> 64비트 정수를 뽑는다.</summary>
+	public static Int64 NextInt64(string userId) =>
+		NextInt64(userId, out _);
+
+	/// <summary>
+	/// userId에 바인딩해 전체 범위 <c>[Int64.MinValue, Int64.MaxValue]</c> 64비트 정수를 뽑고 감사용 <paramref name="tick"/>을 받는다.
+	/// 전 범위 <see cref="NextUInt64(string, out Int64)"/>의 비트 패턴을 부호 있는 정수로 그대로 재해석한다(2의 보수, 무편향).
+	/// </summary>
+	public static Int64 NextInt64(string userId, out Int64 tick) =>
+		unchecked((Int64)NextUInt64(userId, out tick));
+
 	/// <summary>빈 사용자로 <c>[0, maxExclusive)</c> 64비트 정수를 뽑는다.</summary>
 	public static Int64 NextInt64(Int64 maxExclusive) =>
 		NextInt64(string.Empty, maxExclusive);
@@ -208,6 +246,31 @@ public static class AuditableRandom
 		UInt64 range = unchecked((UInt64)(maxExclusive - minInclusive));
 		UInt64 value = NextUInt64(userId, range, out tick);
 		return unchecked(minInclusive + (Int64)value);
+	}
+
+	/// <summary>빈 사용자로 전체 범위 <c>[0, 2^32)</c> 부호 없는 정수를 뽑는다.</summary>
+	public static UInt32 NextUInt32() =>
+		NextUInt32(string.Empty, out _);
+
+	/// <summary>빈 사용자로 전체 범위 <c>[0, 2^32)</c> 부호 없는 정수를 뽑고 감사용 tick을 받는다.</summary>
+	public static UInt32 NextUInt32(out Int64 tick) =>
+		NextUInt32(string.Empty, out tick);
+
+	/// <summary>userId에 바인딩해 전체 범위 <c>[0, 2^32)</c> 부호 없는 정수를 뽑는다.</summary>
+	public static UInt32 NextUInt32(string userId) =>
+		NextUInt32(userId, out _);
+
+	/// <summary>
+	/// userId에 바인딩해 전체 범위 <c>[0, 2^32)</c> 부호 없는 정수를 뽑고 감사용 <paramref name="tick"/>을 받는다.
+	/// 범위가 2^32 전체라 거부표본추출 없이 한 블록의 앞 4바이트를 big-endian으로 읽어 그대로 반환한다.
+	/// </summary>
+	public static UInt32 NextUInt32(string userId, out Int64 tick)
+	{
+		ThrowIfNotInitialized();
+		Span<byte> block = stackalloc byte[BlockSize];
+		tick = GetUniqueExecutionTicks();
+		FillBlock(userId, tick, block);
+		return BinaryPrimitives.ReadUInt32BigEndian(block[..4]);
 	}
 
 	/// <summary>빈 사용자로 <c>[0, maxExclusive)</c> 부호 없는 정수를 뽑는다.</summary>
@@ -267,6 +330,31 @@ public static class AuditableRandom
 		UInt32 range = maxExclusive - minInclusive;
 		UInt32 value = NextUInt32(userId, range, out tick);
 		return minInclusive + value;
+	}
+
+	/// <summary>빈 사용자로 전체 범위 <c>[0, 2^64)</c> 부호 없는 64비트 정수를 뽑는다.</summary>
+	public static UInt64 NextUInt64() =>
+		NextUInt64(string.Empty, out _);
+
+	/// <summary>빈 사용자로 전체 범위 <c>[0, 2^64)</c> 부호 없는 64비트 정수를 뽑고 감사용 tick을 받는다.</summary>
+	public static UInt64 NextUInt64(out Int64 tick) =>
+		NextUInt64(string.Empty, out tick);
+
+	/// <summary>userId에 바인딩해 전체 범위 <c>[0, 2^64)</c> 부호 없는 64비트 정수를 뽑는다.</summary>
+	public static UInt64 NextUInt64(string userId) =>
+		NextUInt64(userId, out _);
+
+	/// <summary>
+	/// userId에 바인딩해 전체 범위 <c>[0, 2^64)</c> 부호 없는 64비트 정수를 뽑고 감사용 <paramref name="tick"/>을 받는다.
+	/// 범위가 2^64 전체라 거부표본추출 없이 한 블록의 앞 8바이트를 big-endian으로 읽어 그대로 반환한다.
+	/// </summary>
+	public static UInt64 NextUInt64(string userId, out Int64 tick)
+	{
+		ThrowIfNotInitialized();
+		Span<byte> block = stackalloc byte[BlockSize];
+		tick = GetUniqueExecutionTicks();
+		FillBlock(userId, tick, block);
+		return BinaryPrimitives.ReadUInt64BigEndian(block[..8]);
 	}
 
 	/// <summary>빈 사용자로 <c>[0, maxExclusive)</c> 부호 없는 64비트 정수를 뽑는다.</summary>
@@ -678,6 +766,14 @@ public static class AuditableRandom
 	private static void FillStreamCore(Vector128<UInt32> keyLow, Vector128<UInt32> keyHigh, UInt32 counter,
 		ReadOnlySpan<byte> nonce, Span<byte> destination)
 	{
+		// RFC 8439는 (key, nonce)당 counter 공간을 2^32블록(=256GiB)으로 제한한다. 이 한 번의 호출이
+		// 쓰는 counter 구간은 [counter, counter + blocks - 1]이며, blocks가 2^32 이하인 한 (시작값에서
+		// 2의 보수로 랩되더라도) 모든 블록의 counter가 서로 달라 keystream이 겹치지 않는다.
+		// Span<byte>의 길이는 Int32(<= ~2GiB, 약 3355만 블록)라 단일 호출에서 이 한계를 넘는 것은 불가능하므로
+		// 런타임 가드 없이 불변식만 디버그에서 검증한다.
+		Debug.Assert((destination.Length + (BlockSize - 1L)) / BlockSize <= (1L << 32),
+			"Fill 길이가 ChaCha20 counter 주기(2^32블록)를 넘어 keystream이 재사용될 수 있습니다.");
+
 		while (destination.Length >= BlockSize)
 		{
 			BlockCore(keyLow, keyHigh, counter, nonce, destination);
