@@ -62,7 +62,7 @@ public class AuditableRandomBenchmarks
     // ── AuditableRandom: 빈 userId (캐시된 해시 경로) ─────────────────────────
 
     [Benchmark]
-    public int Next_EmptyUserId() => AuditableRandom.Next(1_000_000);
+    public int NextInt32_EmptyUserId() => AuditableRandom.NextInt32(1_000_000);
 
     [Benchmark]
     public long NextInt64_EmptyUserId() => AuditableRandom.NextInt64(1_000_000_000_000L);
@@ -76,7 +76,7 @@ public class AuditableRandomBenchmarks
     // ── AuditableRandom: 비어 있지 않은 userId (xxHash3 경로) ─────────────────
 
     [Benchmark]
-    public int Next_WithUserId() => AuditableRandom.Next("user-0000000000000001", 1_000_000);
+    public int NextInt32_WithUserId() => AuditableRandom.NextInt32("user-0000000000000001", 1_000_000);
 
     [Benchmark]
     public long NextInt64_WithUserId() => AuditableRandom.NextInt64("user-0000000000000001", 1_000_000_000_000L);

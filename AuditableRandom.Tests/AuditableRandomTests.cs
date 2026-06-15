@@ -472,7 +472,7 @@ public class NoWinStreakTests(ITestOutputHelper output)
 	}
 
 	/// <summary>
-	/// 명시 seed 경로로 <c>Next(userId, maxExclusive)</c>와 동일한 <c>[0, maxExclusive)</c> 값을 뽑는다.
+	/// 명시 seed 경로로 <c>NextInt32(userId, maxExclusive)</c>와 동일한 <c>[0, maxExclusive)</c> 값을 뽑는다.
 	/// 전역 <see cref="AuditableRandom.NextUInt32(string, UInt32, out Int64)"/>와 똑같은
 	/// Lemire multiply-shift 거부표본추출(모듈로 편향 없음)을 한 블록의 16워드에 적용한다.
 	/// Initialize() 없이 결정론적·재현 가능하게 실행되도록 seed와 tick을 직접 받는다.
@@ -499,7 +499,7 @@ public class NoWinStreakTests(ITestOutputHelper output)
 
 	/// <summary>
 	/// 명시 seed 경로로 전역 <see cref="AuditableRandom.Hits(string, Int32, Int32, out Int64)"/>와 동일하게
-	/// 명중(당첨) 여부를 판정한다. 전역 Hits가 <c>Next(denominator) &lt; numerator</c>인 것과 동형으로,
+	/// 명중(당첨) 여부를 판정한다. 전역 Hits가 <c>NextInt32(denominator) &lt; numerator</c>인 것과 동형으로,
 	/// 여기서는 <see cref="NextValue"/>(= 명시 seed 경로의 Next)에 같은 비교를 적용한다.
 	/// </summary>
 	private static bool HitsValue(byte[] seed, string userId, Int64 tick, Int32 numerator, Int32 denominator) =>
@@ -549,7 +549,7 @@ public class InitializeTests
 		Assert.True(AuditableRandom.IsInitialized);  // Initialize 후에는 true
 
 		// 이후 발급되는 tick은 resumeAfterTick을 반드시 초과해야 한다.
-		AuditableRandom.Next("u", 1000, out Int64 tick);
+		AuditableRandom.NextInt32("u", 1000, out Int64 tick);
 		Assert.True(tick > resume, $"발급 tick({tick})이 resume({resume})을 초과해야 한다");
 
 		// B2: 전역 캐시 키 경로(GetBlockChaCha20(userId, tick))의 출력이
@@ -629,12 +629,12 @@ public class InitializeTests
 		byte[] i64Block = AuditableRandom.GetBlockChaCha20(seed, "full-user", i64Tick);
 		Assert.Equal(unchecked((Int64)BinaryPrimitives.ReadUInt64BigEndian(i64Block)), i64Full);
 
-		// 감사 라운드트립: Next/NextDouble로 뽑은 값을 (seed, userId, tick)만으로 동일하게 재현한다.
+		// 감사 라운드트립: NextInt32/NextDouble로 뽑은 값을 (seed, userId, tick)만으로 동일하게 재현한다.
 		// 저장된 seed로 재현하는 실제 감사 경로(전역 상태와 무관)를 검증한다 — 이 라이브러리의 핵심 계약.
 		for (Int32 k = 0; k < 50; k++)
 		{
 			const UInt32 Max = 1000;
-			Int32 drawn = AuditableRandom.Next("audit-user", (Int32)Max, out Int64 drawTick);
+			Int32 drawn = AuditableRandom.NextInt32("audit-user", (Int32)Max, out Int64 drawTick);
 
 			// 재현: 저장한 seed로 동일 블록을 만들고 생성 당시와 동일한 Lemire 거부표본 스캔을 적용.
 			byte[] block = AuditableRandom.GetBlockChaCha20(seed, "audit-user", drawTick);
@@ -661,7 +661,7 @@ public class InitializeTests
 		}
 
 		// Hits 헬퍼: 확률 numerator/denominator로 명중하며, 명중 여부까지 (seed, userId, tick)만으로 재현된다.
-		// Hits는 내부적으로 Next(denominator) < numerator이므로, 저장된 tick의 Lemire 스캔 결과로 명중을 재현한다.
+		// Hits는 내부적으로 NextInt32(denominator) < numerator이므로, 저장된 tick의 Lemire 스캔 결과로 명중을 재현한다.
 		{
 			const Int32 Numerator = 3000;     // 30.00%
 			const UInt32 Denominator = 10000;
@@ -740,7 +740,7 @@ public class InitializeTests
 		}
 
 		// null userId는 ArgumentNullException(초기화 후 전역 경로의 WriteUserIdHash에서 검증).
-		Assert.Throws<ArgumentNullException>(() => AuditableRandom.Next(null!, 10));
+		Assert.Throws<ArgumentNullException>(() => AuditableRandom.NextInt32(null!, 10));
 
 		// 두 번째 Initialize는 예외.
 		Assert.Throws<InvalidOperationException>(() => AuditableRandom.Initialize(seed));

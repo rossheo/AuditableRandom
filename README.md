@@ -29,7 +29,7 @@ byte[] seed = RandomNumberGenerator.GetBytes(32);
 AuditableRandom.Initialize(seed);
 
 // 2) 난수 추출 — tick을 함께 받아 (userId, tick)을 감사 로그에 저장한다.
-Int32 dice = AuditableRandom.Next("user-123", 1, 7, out Int64 tick); // [1, 7)
+Int32 dice = AuditableRandom.NextInt32("user-123", 1, 7, out Int64 tick); // [1, 7)
 // → dice와 (userId="user-123", tick)을 저장.
 
 // 3) 사후 재현(감사) — 동일 (userId, tick)으로 keystream 블록을 다시 만들어 검증한다.
@@ -47,13 +47,13 @@ byte[] past = AuditableRandom.GetBlockChaCha20(oldSeed, "user-123", tick);
 | 메서드 | 설명 |
 |---|---|
 | `Initialize(seed[, resumeAfterTick])` | 32바이트 seed 등록(프로세스당 1회). `byte[]`/`ReadOnlySpan<byte>` 모두 지원 |
-| `Next(...)` / `NextInt64(...)` | 부호 있는 정수 `[0, max)` 또는 `[min, max)` |
-| `NextInt32(...)` / `NextInt64(...)` | 부호 있는 정수 전 범위 `[T.MinValue, T.MaxValue]` (무인자 `Next()`가 `System.Random.Next()`(음수 없음)와 혼동되지 않도록 `NextInt32`로 명명) |
+| `NextInt32(...)` / `NextInt64(...)` | 부호 있는 정수 `[0, max)` 또는 `[min, max)` |
+| `NextInt32(...)` / `NextInt64(...)` (전 범위) | 부호 있는 정수 전 범위 `[T.MinValue, T.MaxValue]` |
 | `NextUInt32(...)` / `NextUInt64(...)` | 부호 없는 정수 `[0, max)` 또는 `[min, max)` |
-| `NextUInt32(...)` / `NextUInt64(...)` (전 범위) | 부호 없는 정수 전 범위 `[0, 2ⁿ)` |
+| `NextUInt32(...)` / `NextUInt64(...)` (전 범위) | 부호 없는 정수 전 범위 `[0, 2ⁿ−1]` |
 | `NextDouble(...)` / `NextSingle(...)` | `[0, 1)` 부동소수 |
-| `Hits([userId,] numerator, denominator[, out tick])` | 확률 `numerator/denominator`로 명중(당첨) 여부 `bool`. `Next(denominator) < numerator`로 판정해 `0`은 절대·`denominator`는 항상 명중 |
-| `Hits([userId,] probability[, out tick])` | 확률 `probability`(`[0,1]`)로 명중 여부 `bool`. `NextDouble() < probability`로 판정. 정확한 유리수 확률은 정수 오버로드 권장(`0.3`은 이진 부동소수로 정확히 표현 불가) |
+| `Hits([userId,] numerator, denominator[, out tick])` | 확률 `numerator/denominator`로 명중(당첨) 여부. `NextInt32(denominator) < numerator`로 판정 |
+| `Hits([userId,] probability[, out tick])` | 확률 `probability`(`[0,1]`)로 명중 여부. `NextDouble() < probability`로 판정. 정확한 유리수 확률은 정수 오버로드 권장(`0.3`은 이진 부동소수로 정확히 표현 불가) |
 | `Shuffle([userId,] IList<T> \| Span<T> \| T[])` | Fisher-Yates 셔플(감사 대상 아님) |
 | `GetBlockChaCha20(...)` | 64바이트 keystream 블록 생성/재현 |
 | `Fill(...)` | 임의 길이 keystream 생성/재현(64바이트 블록마다 counter+1, RFC 8439 방식) |
@@ -65,8 +65,8 @@ byte[] past = AuditableRandom.GetBlockChaCha20(oldSeed, "user-123", tick);
 ```csharp
 AuditableRandom.NextDouble();                          // 빈 userId, tick 버림
 AuditableRandom.NextDouble(out Int64 tick);            // 빈 userId, tick 받음
-AuditableRandom.Next(1, 7);                            // [1,7), 빈 userId
-AuditableRandom.Next("user-1", 1, 7, out Int64 tick);  // [1,7), userId + tick
+AuditableRandom.NextInt32(1, 7);                       // [1,7), 빈 userId
+AuditableRandom.NextInt32("user-1", 1, 7, out Int64 tick); // [1,7), userId + tick
 AuditableRandom.NextUInt64("user-1", 1000UL);          // [0,1000)
 AuditableRandom.Hits("user-1", 3000, 10000);           // 30.00% 명중 여부(bool)
 ```
@@ -99,12 +99,12 @@ ChaCha20을 직접 구현한 라이브러리로 **독립적인 외부 암호 감
 
 ## 통계 시뮬레이션: 1% 당첨과 연속 미당첨(TOP 3)
 
-테스트 `NoWinStreakTests`는 사용자 10명에게 **당첨 확률 1%**(`Next(userId, 100) == 0`)인 추첨을
+테스트 `NoWinStreakTests`는 사용자 10명에게 **당첨 확률 1%**(`Hits(userId, 1, 100)`)인 추첨을
 사용자당 N회 반복하며, 각 사용자의 **연속 미당첨(streak)** 길이 상위 3개(TOP 3)를 수집한다.
 명시적인 seed 경로를 쓰므로 아래 결과는 **결정론적으로 재현**된다.
 
 ```text
-사용자: 10명  추첨: 100회  당첨 확률: 1% (Next(userId, 100) == 0)
+사용자: 10명  추첨: 100회  당첨 확률: 1% (Hits(userId, 1, 100))
 ----------------------------------------------------------------
 user-00  당첨   1회  TOP3 연속 미당첨: [ 97,   2,   0]
 user-01  당첨   6회  TOP3 연속 미당첨: [ 36,  24,  18]
@@ -117,7 +117,7 @@ user-07  당첨   1회  TOP3 연속 미당첨: [ 87,  12,   0]
 user-08  당첨   1회  TOP3 연속 미당첨: [ 59,  40,   0]
 user-09  당첨   2회  TOP3 연속 미당첨: [ 48,  37,  13]
 
-사용자: 10명  추첨: 200회  당첨 확률: 1% (Next(userId, 100) == 0)
+사용자: 10명  추첨: 200회  당첨 확률: 1% (Hits(userId, 1, 100))
 ----------------------------------------------------------------
 user-00  당첨   2회  TOP3 연속 미당첨: [ 97,  85,  16]
 user-01  당첨   6회  TOP3 연속 미당첨: [136,  24,  18]
@@ -130,7 +130,7 @@ user-07  당첨   2회  TOP3 연속 미당첨: [109,  87,   2]
 user-08  당첨   2회  TOP3 연속 미당첨: [139,  40,  19]
 user-09  당첨   4회  TOP3 연속 미당첨: [ 84,  38,  37]
 
-사용자: 10명  추첨: 300회  당첨 확률: 1% (Next(userId, 100) == 0)
+사용자: 10명  추첨: 300회  당첨 확률: 1% (Hits(userId, 1, 100))
 ----------------------------------------------------------------
 user-00  당첨   3회  TOP3 연속 미당첨: [ 97,  92,  85]
 user-01  당첨   8회  TOP3 연속 미당첨: [191,  24,  24]
@@ -143,7 +143,7 @@ user-07  당첨   3회  TOP3 연속 미당첨: [109,  87,  72]
 user-08  당첨   2회  TOP3 연속 미당첨: [139, 119,  40]
 user-09  당첨   4회  TOP3 연속 미당첨: [138,  84,  37]
 
-사용자: 10명  추첨: 400회  당첨 확률: 1% (Next(userId, 100) == 0)
+사용자: 10명  추첨: 400회  당첨 확률: 1% (Hits(userId, 1, 100))
 ----------------------------------------------------------------
 user-00  당첨   4회  TOP3 연속 미당첨: [159,  97,  85]
 user-01  당첨   9회  TOP3 연속 미당첨: [191,  98,  24]
@@ -156,7 +156,7 @@ user-07  당첨   4회  TOP3 연속 미당첨: [121, 109,  87]
 user-08  당첨   4회  TOP3 연속 미당첨: [143, 139,  65]
 user-09  당첨   4회  TOP3 연속 미당첨: [238,  84,  37]
 
-사용자: 10명  추첨: 100,000회  당첨 확률: 1% (Next(userId, 100) == 0)
+사용자: 10명  추첨: 100,000회  당첨 확률: 1% (Hits(userId, 1, 100))
 ----------------------------------------------------------------
 user-00  당첨 1048회  TOP3 연속 미당첨: [697, 642, 633]
 user-01  당첨 1003회  TOP3 연속 미당첨: [991, 972, 676]
@@ -208,12 +208,6 @@ P(N회 동안 0회 당첨) = 0.99^N
 
 ```
 dotnet build -c Release
-```
-
-생성된 패키지를 nuget.org에 게시(API 키 필요):
-
-```
-dotnet nuget push AuditableRandom/bin/Release/AuditableRandom.*.nupkg --api-key <NUGET_API_KEY> --source https://api.nuget.org/v3/index.json
 ```
 
 > 게시 전 변경사항을 **커밋·푸시**해야 SourceLink가 가리키는 커밋과 패키지에 담긴 소스가 일치한다.

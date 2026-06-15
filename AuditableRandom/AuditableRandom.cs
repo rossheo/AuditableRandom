@@ -120,45 +120,45 @@ public static class AuditableRandom
 
 	/// <summary>
 	/// <see cref="Initialize(byte[])"/>가 호출되어 seed가 등록되었는지 여부.
-	/// 전역 seed 경로(Next/NextDouble/Shuffle 등)는 등록 후에만 사용할 수 있다.
+	/// 전역 seed 경로(NextInt32/NextDouble/Shuffle 등)는 등록 후에만 사용할 수 있다.
 	/// </summary>
 	public static bool IsInitialized => Volatile.Read(ref _seedRegistered);
 
 	/// <summary>빈 사용자로 <c>[0, maxExclusive)</c> 정수를 뽑는다.</summary>
-	public static Int32 Next(Int32 maxExclusive) =>
-		Next(string.Empty, maxExclusive);
+	public static Int32 NextInt32(Int32 maxExclusive) =>
+		NextInt32(string.Empty, maxExclusive);
 
 	/// <summary>빈 사용자로 <c>[0, maxExclusive)</c> 정수를 뽑고 감사용 tick을 받는다.</summary>
-	public static Int32 Next(Int32 maxExclusive, out Int64 tick) =>
-		Next(string.Empty, maxExclusive, out tick);
+	public static Int32 NextInt32(Int32 maxExclusive, out Int64 tick) =>
+		NextInt32(string.Empty, maxExclusive, out tick);
 
 	/// <summary>빈 사용자로 <c>[minInclusive, maxExclusive)</c> 정수를 뽑는다.</summary>
-	public static Int32 Next(Int32 minInclusive, Int32 maxExclusive) =>
-		Next(string.Empty, minInclusive, maxExclusive);
+	public static Int32 NextInt32(Int32 minInclusive, Int32 maxExclusive) =>
+		NextInt32(string.Empty, minInclusive, maxExclusive);
 
 	/// <summary>빈 사용자로 <c>[minInclusive, maxExclusive)</c> 정수를 뽑고 감사용 tick을 받는다.</summary>
-	public static Int32 Next(Int32 minInclusive, Int32 maxExclusive, out Int64 tick) =>
-		Next(string.Empty, minInclusive, maxExclusive, out tick);
+	public static Int32 NextInt32(Int32 minInclusive, Int32 maxExclusive, out Int64 tick) =>
+		NextInt32(string.Empty, minInclusive, maxExclusive, out tick);
 
 	/// <summary>userId에 바인딩해 <c>[0, maxExclusive)</c> 정수를 뽑는다.</summary>
-	public static Int32 Next(string userId, Int32 maxExclusive) =>
-		Next(userId, maxExclusive, out _);
+	public static Int32 NextInt32(string userId, Int32 maxExclusive) =>
+		NextInt32(userId, maxExclusive, out _);
 
 	/// <summary>userId에 바인딩해 <c>[0, maxExclusive)</c> 정수를 뽑고 감사용 <paramref name="tick"/>을 받는다.</summary>
 	/// <exception cref="ArgumentOutOfRangeException"><paramref name="maxExclusive"/>가 0 이하인 경우</exception>
-	public static Int32 Next(string userId, Int32 maxExclusive, out Int64 tick)
+	public static Int32 NextInt32(string userId, Int32 maxExclusive, out Int64 tick)
 	{
 		ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxExclusive);
 		return (Int32)NextUInt32(userId, (UInt32)maxExclusive, out tick);
 	}
 
 	/// <summary>userId에 바인딩해 <c>[minInclusive, maxExclusive)</c> 정수를 뽑는다.</summary>
-	public static Int32 Next(string userId, Int32 minInclusive, Int32 maxExclusive) =>
-		Next(userId, minInclusive, maxExclusive, out _);
+	public static Int32 NextInt32(string userId, Int32 minInclusive, Int32 maxExclusive) =>
+		NextInt32(userId, minInclusive, maxExclusive, out _);
 
 	/// <summary>userId에 바인딩해 <c>[minInclusive, maxExclusive)</c> 정수를 뽑고 감사용 <paramref name="tick"/>을 받는다.</summary>
 	/// <exception cref="ArgumentOutOfRangeException"><paramref name="minInclusive"/>가 <paramref name="maxExclusive"/> 이상인 경우</exception>
-	public static Int32 Next(string userId, Int32 minInclusive, Int32 maxExclusive, out Int64 tick)
+	public static Int32 NextInt32(string userId, Int32 minInclusive, Int32 maxExclusive, out Int64 tick)
 	{
 		ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(minInclusive, maxExclusive);
 		// Int64로 폭을 넓혀 (max - min), (min + value) 모두 오버플로 없이 계산한다.
@@ -248,20 +248,20 @@ public static class AuditableRandom
 		return unchecked(minInclusive + (Int64)value);
 	}
 
-	/// <summary>빈 사용자로 전체 범위 <c>[0, 2^32)</c> 부호 없는 정수를 뽑는다.</summary>
+	/// <summary>빈 사용자로 전체 범위 <c>[0, 2^32-1]</c> 부호 없는 정수를 뽑는다.</summary>
 	public static UInt32 NextUInt32() =>
 		NextUInt32(string.Empty, out _);
 
-	/// <summary>빈 사용자로 전체 범위 <c>[0, 2^32)</c> 부호 없는 정수를 뽑고 감사용 tick을 받는다.</summary>
+	/// <summary>빈 사용자로 전체 범위 <c>[0, 2^32-1]</c> 부호 없는 정수를 뽑고 감사용 tick을 받는다.</summary>
 	public static UInt32 NextUInt32(out Int64 tick) =>
 		NextUInt32(string.Empty, out tick);
 
-	/// <summary>userId에 바인딩해 전체 범위 <c>[0, 2^32)</c> 부호 없는 정수를 뽑는다.</summary>
+	/// <summary>userId에 바인딩해 전체 범위 <c>[0, 2^32-1]</c> 부호 없는 정수를 뽑는다.</summary>
 	public static UInt32 NextUInt32(string userId) =>
 		NextUInt32(userId, out _);
 
 	/// <summary>
-	/// userId에 바인딩해 전체 범위 <c>[0, 2^32)</c> 부호 없는 정수를 뽑고 감사용 <paramref name="tick"/>을 받는다.
+	/// userId에 바인딩해 전체 범위 <c>[0, 2^32-1]</c> 부호 없는 정수를 뽑고 감사용 <paramref name="tick"/>을 받는다.
 	/// 범위가 2^32 전체라 거부표본추출 없이 한 블록의 앞 4바이트를 big-endian으로 읽어 그대로 반환한다.
 	/// </summary>
 	public static UInt32 NextUInt32(string userId, out Int64 tick)
@@ -332,20 +332,20 @@ public static class AuditableRandom
 		return minInclusive + value;
 	}
 
-	/// <summary>빈 사용자로 전체 범위 <c>[0, 2^64)</c> 부호 없는 64비트 정수를 뽑는다.</summary>
+	/// <summary>빈 사용자로 전체 범위 <c>[0, 2^64-1]</c> 부호 없는 64비트 정수를 뽑는다.</summary>
 	public static UInt64 NextUInt64() =>
 		NextUInt64(string.Empty, out _);
 
-	/// <summary>빈 사용자로 전체 범위 <c>[0, 2^64)</c> 부호 없는 64비트 정수를 뽑고 감사용 tick을 받는다.</summary>
+	/// <summary>빈 사용자로 전체 범위 <c>[0, 2^64-1]</c> 부호 없는 64비트 정수를 뽑고 감사용 tick을 받는다.</summary>
 	public static UInt64 NextUInt64(out Int64 tick) =>
 		NextUInt64(string.Empty, out tick);
 
-	/// <summary>userId에 바인딩해 전체 범위 <c>[0, 2^64)</c> 부호 없는 64비트 정수를 뽑는다.</summary>
+	/// <summary>userId에 바인딩해 전체 범위 <c>[0, 2^64-1]</c> 부호 없는 64비트 정수를 뽑는다.</summary>
 	public static UInt64 NextUInt64(string userId) =>
 		NextUInt64(userId, out _);
 
 	/// <summary>
-	/// userId에 바인딩해 전체 범위 <c>[0, 2^64)</c> 부호 없는 64비트 정수를 뽑고 감사용 <paramref name="tick"/>을 받는다.
+	/// userId에 바인딩해 전체 범위 <c>[0, 2^64-1]</c> 부호 없는 64비트 정수를 뽑고 감사용 <paramref name="tick"/>을 받는다.
 	/// 범위가 2^64 전체라 거부표본추출 없이 한 블록의 앞 8바이트를 big-endian으로 읽어 그대로 반환한다.
 	/// </summary>
 	public static UInt64 NextUInt64(string userId, out Int64 tick)
@@ -476,7 +476,7 @@ public static class AuditableRandom
 
 	/// <summary>
 	/// userId에 바인딩해 확률 <c>numerator/denominator</c>로 명중(당첨) 여부를 뽑고 감사용 <paramref name="tick"/>을 받는다.
-	/// <c>Next(denominator) &lt; numerator</c>로 판정하므로 명중 확률은 정확히 numerator/denominator이다.
+	/// <c>NextInt32(denominator) &lt; numerator</c>로 판정하므로 명중 확률은 정확히 numerator/denominator이다.
 	/// numerator가 0이면 절대 명중하지 않고, numerator가 denominator와 같으면 항상 명중하며, 두 경계 모두 tick은 발급된다.
 	/// </summary>
 	/// <exception cref="ArgumentOutOfRangeException">
@@ -490,7 +490,7 @@ public static class AuditableRandom
 		ArgumentOutOfRangeException.ThrowIfGreaterThan(numerator, denominator);
 		// [0, denominator)에서 0..numerator-1이 명중 → 정확히 numerator/denominator.
 		// numerator==0이면 항상 거짓, numerator==denominator이면 항상 참으로 경계가 정확하다.
-		return Next(userId, denominator, out tick) < numerator;
+		return NextInt32(userId, denominator, out tick) < numerator;
 	}
 
 	/// <summary>빈 사용자로 확률 <paramref name="probability"/>(<c>[0, 1]</c>)로 명중(당첨) 여부를 뽑는다.</summary>
