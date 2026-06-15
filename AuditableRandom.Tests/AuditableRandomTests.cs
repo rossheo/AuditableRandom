@@ -362,13 +362,14 @@ public class NoWinStreakTests(ITestOutputHelper output)
 	private void RunTop3NoWinStreaks(Int32 drawsPerUser)
 	{
 		const Int32 UserCount = 10;
-		const Int32 WinDenominator = 100; // 당첨 확률 1% (Next(userId, 100) == 0)
+		const Int32 WinNumerator = 1;     // 당첨 확률 1% = Hits(userId, 1, 100)
+		const Int32 WinDenominator = 100;
 
 		byte[] seed = Seed();
 
 		output.WriteLine(
 			$"사용자: {UserCount}명  추첨: {drawsPerUser:N0}회  " +
-			$"당첨 확률: {100.0 / WinDenominator:F0}% (Next(userId, {WinDenominator}) == 0)");
+			$"당첨 확률: {100.0 * WinNumerator / WinDenominator:F0}% (Hits(userId, {WinNumerator}, {WinDenominator}))");
 		output.WriteLine(new string('-', 64));
 
 		for (Int32 u = 0; u < UserCount; u++)
@@ -383,10 +384,8 @@ public class NoWinStreakTests(ITestOutputHelper output)
 
 			for (Int64 tick = 1; tick <= drawsPerUser; tick++)
 			{
-				// Next(userId, WinDenominator)와 동일한 [0, WinDenominator) 값을 명시 seed로 결정론적으로 뽑는다.
-				UInt32 draw = NextValue(seed, userId, tick, (UInt32)WinDenominator);
-
-				if (draw == 0) // 당첨 → 진행 중이던 미당첨 streak 종료
+				// Hits(userId, WinNumerator, WinDenominator)와 동일한 명중 판정을 명시 seed로 결정론적으로 수행한다.
+				if (HitsValue(seed, userId, tick, WinNumerator, WinDenominator)) // 당첨 → 진행 중이던 미당첨 streak 종료
 				{
 					wins++;
 					RecordStreak(top3, currentStreak);
@@ -497,6 +496,14 @@ public class NoWinStreakTests(ITestOutputHelper output)
 			tick++;
 		}
 	}
+
+	/// <summary>
+	/// 명시 seed 경로로 전역 <see cref="AuditableRandom.Hits(string, Int32, Int32, out Int64)"/>와 동일하게
+	/// 명중(당첨) 여부를 판정한다. 전역 Hits가 <c>Next(denominator) &lt; numerator</c>인 것과 동형으로,
+	/// 여기서는 <see cref="NextValue"/>(= 명시 seed 경로의 Next)에 같은 비교를 적용한다.
+	/// </summary>
+	private static bool HitsValue(byte[] seed, string userId, Int64 tick, Int32 numerator, Int32 denominator) =>
+		NextValue(seed, userId, tick, (UInt32)denominator) < numerator;
 
 	/// <summary>streak을 상위 3개 배열(내림차순)에 삽입한다. 최솟값 이하면 버린다.</summary>
 	private static void RecordStreak(Int32[] top3, Int32 streak)
@@ -653,6 +660,85 @@ public class InitializeTests
 			Assert.Equal(dDrawn, dRepro);
 		}
 
+		// Hits 헬퍼: 확률 numerator/denominator로 명중하며, 명중 여부까지 (seed, userId, tick)만으로 재현된다.
+		// Hits는 내부적으로 Next(denominator) < numerator이므로, 저장된 tick의 Lemire 스캔 결과로 명중을 재현한다.
+		{
+			const Int32 Numerator = 3000;     // 30.00%
+			const UInt32 Denominator = 10000;
+			const Int32 Trials = 20_000;
+			Int32 hitCount = 0;
+			for (Int32 k = 0; k < Trials; k++)
+			{
+				bool hit = AuditableRandom.Hits("hit-user", Numerator, (Int32)Denominator, out Int64 hitTick);
+				Assert.True(hitTick > resume);
+				if (hit)
+					hitCount++;
+
+				// 재현: 저장한 seed로 동일 블록을 만들고 Next와 동일한 Lemire 스캔 후 < numerator로 판정.
+				byte[] block = AuditableRandom.GetBlockChaCha20(seed, "hit-user", hitTick);
+				Int32 reproduced = -1;
+				for (Int32 i = 0; i <= 64 - 4; i += 4)
+				{
+					UInt32 raw = BinaryPrimitives.ReadUInt32BigEndian(block.AsSpan(i, 4));
+					UInt64 product = (UInt64)raw * Denominator;
+					UInt32 low = (UInt32)product;
+					if (low >= Denominator || low >= unchecked(0u - Denominator) % Denominator)
+					{
+						reproduced = (Int32)(product >> 32);
+						break;
+					}
+				}
+				Assert.Equal(hit, reproduced < Numerator);
+			}
+
+			// 30% 비율로 수렴해야 한다(20k 시행, p=0.3의 ±0.02는 약 6σ로 매우 안전).
+			double rate = (double)hitCount / Trials;
+			Assert.InRange(rate, 0.28, 0.32);
+		}
+
+		// Hits 경계: numerator==0은 절대 명중하지 않고, numerator==denominator는 항상 명중한다.
+		// 두 경계 모두 결정론적이지만 tick은 발급되어 감사 기록이 균일하게 남는다.
+		for (Int32 k = 0; k < 100; k++)
+		{
+			Assert.False(AuditableRandom.Hits("hit-bound", 0, 10000, out Int64 neverTick));
+			Assert.True(neverTick > resume);
+			Assert.True(AuditableRandom.Hits("hit-bound", 10000, 10000, out Int64 alwaysTick));
+			Assert.True(alwaysTick > resume);
+		}
+
+		// Hits(double): 확률 probability로 명중하며, NextDouble과 동일하게 앞 8바이트만 쓰므로
+		// 명중 여부가 (seed, userId, tick)만으로 거부 없이 직접 재현된다.
+		{
+			const double Probability = 0.3;
+			const Int32 Trials = 20_000;
+			Int32 hitCount = 0;
+			for (Int32 k = 0; k < Trials; k++)
+			{
+				bool hit = AuditableRandom.Hits("hit-dbl", Probability, out Int64 hitTick);
+				Assert.True(hitTick > resume);
+				if (hit)
+					hitCount++;
+
+				// 재현: 저장한 seed로 동일 블록의 앞 8바이트를 NextDouble과 동일하게 추출 후 < probability로 판정.
+				byte[] block = AuditableRandom.GetBlockChaCha20(seed, "hit-dbl", hitTick);
+				UInt64 raw = BinaryPrimitives.ReadUInt64BigEndian(block);
+				double value = (raw >> 11) * (1.0 / (1UL << 53));
+				Assert.Equal(hit, value < Probability);
+			}
+
+			double rate = (double)hitCount / Trials;
+			Assert.InRange(rate, 0.28, 0.32);
+		}
+
+		// Hits(double) 경계: 0.0은 절대, 1.0은 항상 명중. 두 경계도 tick은 발급된다.
+		for (Int32 k = 0; k < 100; k++)
+		{
+			Assert.False(AuditableRandom.Hits("hit-dbl-bound", 0.0, out Int64 neverTick));
+			Assert.True(neverTick > resume);
+			Assert.True(AuditableRandom.Hits("hit-dbl-bound", 1.0, out Int64 alwaysTick));
+			Assert.True(alwaysTick > resume);
+		}
+
 		// null userId는 ArgumentNullException(초기화 후 전역 경로의 WriteUserIdHash에서 검증).
 		Assert.Throws<ArgumentNullException>(() => AuditableRandom.Next(null!, 10));
 
@@ -692,6 +778,42 @@ public class UnsignedRangeValidationTests
 	public void GetBlockChaCha20_NegativeTick_Throws() =>
 		// 생성 경로는 음수 tick을 발급하지 않으므로 재현 경로의 음수는 손상된 감사 로그다.
 		Assert.Throws<ArgumentOutOfRangeException>(() => AuditableRandom.GetBlockChaCha20(new byte[32], "u", -1L));
+}
+
+/// <summary>
+/// Hits 헬퍼의 인자 검증. 세 검증(denominator, numerator 부호, numerator≤denominator)은 모두
+/// Next 호출(RNG 상태 접근) 이전에 일어나므로 Initialize() 없이 독립 실행되며 전역 상태를 건드리지 않는다.
+/// </summary>
+public class HitsValidationTests
+{
+	[Fact]
+	public void Hits_ZeroDenominator_Throws() =>
+		Assert.Throws<ArgumentOutOfRangeException>(() => AuditableRandom.Hits(0, 0));
+
+	[Fact]
+	public void Hits_NegativeDenominator_Throws() =>
+		Assert.Throws<ArgumentOutOfRangeException>(() => AuditableRandom.Hits(0, -1));
+
+	[Fact]
+	public void Hits_NegativeNumerator_Throws() =>
+		Assert.Throws<ArgumentOutOfRangeException>(() => AuditableRandom.Hits(-1, 10));
+
+	[Fact]
+	public void Hits_NumeratorExceedsDenominator_Throws() =>
+		Assert.Throws<ArgumentOutOfRangeException>(() => AuditableRandom.Hits(11, 10));
+
+	[Fact]
+	public void Hits_NaNProbability_Throws() =>
+		// NaN은 모든 비교가 거짓이라 조용히 0%가 되므로 명시적으로 거부해야 한다.
+		Assert.Throws<ArgumentOutOfRangeException>(() => AuditableRandom.Hits(double.NaN));
+
+	[Fact]
+	public void Hits_NegativeProbability_Throws() =>
+		Assert.Throws<ArgumentOutOfRangeException>(() => AuditableRandom.Hits(-0.001));
+
+	[Fact]
+	public void Hits_ProbabilityAboveOne_Throws() =>
+		Assert.Throws<ArgumentOutOfRangeException>(() => AuditableRandom.Hits(1.001));
 }
 
 /// <summary>

@@ -462,6 +462,68 @@ public static class AuditableRandom
 		return (raw >> 9) * (1.0f / (1U << 23));
 	}
 
+	/// <summary>빈 사용자로 확률 <c>numerator/denominator</c>로 명중(당첨) 여부를 뽑는다.</summary>
+	public static bool Hits(Int32 numerator, Int32 denominator) =>
+		Hits(string.Empty, numerator, denominator, out _);
+
+	/// <summary>빈 사용자로 확률 <c>numerator/denominator</c>로 명중(당첨) 여부를 뽑고 감사용 tick을 받는다.</summary>
+	public static bool Hits(Int32 numerator, Int32 denominator, out Int64 tick) =>
+		Hits(string.Empty, numerator, denominator, out tick);
+
+	/// <summary>userId에 바인딩해 확률 <c>numerator/denominator</c>로 명중(당첨) 여부를 뽑는다.</summary>
+	public static bool Hits(string userId, Int32 numerator, Int32 denominator) =>
+		Hits(userId, numerator, denominator, out _);
+
+	/// <summary>
+	/// userId에 바인딩해 확률 <c>numerator/denominator</c>로 명중(당첨) 여부를 뽑고 감사용 <paramref name="tick"/>을 받는다.
+	/// <c>Next(denominator) &lt; numerator</c>로 판정하므로 명중 확률은 정확히 numerator/denominator이다.
+	/// numerator가 0이면 절대 명중하지 않고, numerator가 denominator와 같으면 항상 명중하며, 두 경계 모두 tick은 발급된다.
+	/// </summary>
+	/// <exception cref="ArgumentOutOfRangeException">
+	/// <paramref name="denominator"/>가 0 이하, <paramref name="numerator"/>가 음수,
+	/// 또는 <paramref name="numerator"/>가 <paramref name="denominator"/>를 초과하는 경우
+	/// </exception>
+	public static bool Hits(string userId, Int32 numerator, Int32 denominator, out Int64 tick)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegativeOrZero(denominator);
+		ArgumentOutOfRangeException.ThrowIfNegative(numerator);
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(numerator, denominator);
+		// [0, denominator)에서 0..numerator-1이 명중 → 정확히 numerator/denominator.
+		// numerator==0이면 항상 거짓, numerator==denominator이면 항상 참으로 경계가 정확하다.
+		return Next(userId, denominator, out tick) < numerator;
+	}
+
+	/// <summary>빈 사용자로 확률 <paramref name="probability"/>(<c>[0, 1]</c>)로 명중(당첨) 여부를 뽑는다.</summary>
+	public static bool Hits(double probability) =>
+		Hits(string.Empty, probability, out _);
+
+	/// <summary>빈 사용자로 확률 <paramref name="probability"/>(<c>[0, 1]</c>)로 명중(당첨) 여부를 뽑고 감사용 tick을 받는다.</summary>
+	public static bool Hits(double probability, out Int64 tick) =>
+		Hits(string.Empty, probability, out tick);
+
+	/// <summary>userId에 바인딩해 확률 <paramref name="probability"/>(<c>[0, 1]</c>)로 명중(당첨) 여부를 뽑는다.</summary>
+	public static bool Hits(string userId, double probability) =>
+		Hits(userId, probability, out _);
+
+	/// <summary>
+	/// userId에 바인딩해 확률 <paramref name="probability"/>(<c>[0, 1]</c>)로 명중(당첨) 여부를 뽑고 감사용 <paramref name="tick"/>을 받는다.
+	/// <c><see cref="NextDouble(string, out Int64)"/> &lt; probability</c>로 판정하므로 명중 확률은 probability에 수렴한다.
+	/// probability가 0.0이면 절대 명중하지 않고, 1.0이면 항상 명중하며, 두 경계 모두 tick은 발급된다.
+	/// 0.3 같은 값은 이진 부동소수로 정확히 표현되지 않아 확률이 미세하게 어긋날 수 있다. 정확한 유리수 확률이 필요하면
+	/// <see cref="Hits(string, Int32, Int32, out Int64)"/>(numerator/denominator) 오버로드를 쓴다.
+	/// </summary>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="probability"/>가 NaN이거나 <c>[0, 1]</c> 범위를 벗어난 경우</exception>
+	public static bool Hits(string userId, double probability, out Int64 tick)
+	{
+		// NaN은 모든 비교가 거짓이라 그대로 두면 조용히 0%가 된다. 명시적으로 거부한다.
+		if (double.IsNaN(probability))
+			throw new ArgumentOutOfRangeException(nameof(probability), "확률은 NaN일 수 없다.");
+		ArgumentOutOfRangeException.ThrowIfNegative(probability);
+		ArgumentOutOfRangeException.ThrowIfGreaterThan(probability, 1.0);
+		// NextDouble은 [0, 1)이므로 probability==0.0이면 항상 거짓, probability==1.0이면 항상 참으로 경계가 정확하다.
+		return NextDouble(userId, out tick) < probability;
+	}
+
 	/// <summary>빈 사용자로 셔플한다. <see cref="Shuffle{T}(string, IList{T})"/> 참조.</summary>
 	public static void Shuffle<T>(IList<T> list) =>
 		Shuffle(string.Empty, list);
@@ -592,7 +654,7 @@ public static class AuditableRandom
 	/// ChaCha20으로 64바이트 keystream 블록을 새 틱으로 생성해 반환한다.
 	/// 동일한 seed에서 동일한 (tick, userId) 조합으로 결과를 완벽하게 재현할 수 있다.
 	/// </summary>
-	/// <param name="userId">ApplicationUser.Id 원본값</param>
+	/// <param name="userId">결과를 바인딩할 사용자 식별 문자열(빈 문자열이면 빈 사용자)</param>
 	/// <param name="tick">생성에 사용된 고유 틱 — Audit Log 저장용</param>
 	/// <exception cref="InvalidOperationException">Initialize()가 호출되지 않은 경우</exception>
 	public static byte[] GetBlockChaCha20(string userId, out Int64 tick)
@@ -607,7 +669,7 @@ public static class AuditableRandom
 	/// 64바이트 keystream 블록을 새 틱으로 생성해 <paramref name="destination"/>에 채운다(무할당).
 	/// 버퍼를 재사용할 수 있어 반복 생성에 유리하다.
 	/// </summary>
-	/// <param name="userId">ApplicationUser.Id 원본값</param>
+	/// <param name="userId">결과를 바인딩할 사용자 식별 문자열(빈 문자열이면 빈 사용자)</param>
 	/// <param name="destination">최소 64바이트 출력 버퍼</param>
 	/// <param name="tick">생성에 사용된 고유 틱 — Audit Log 저장용</param>
 	/// <exception cref="ArgumentException">destination이 64바이트 미만인 경우</exception>
@@ -624,7 +686,7 @@ public static class AuditableRandom
 	/// 저장된 (tick, userId)로 keystream 블록을 결정론적으로 재생성한다(Audit 재현용).
 	/// 생성 당시와 동일한 seed가 등록되어 있어야 같은 결과가 나온다.
 	/// </summary>
-	/// <param name="userId">생성 당시 사용한 ApplicationUser.Id 원본값</param>
+	/// <param name="userId">생성 당시 사용한 사용자 식별 문자열</param>
 	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
 	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
 	/// <exception cref="InvalidOperationException">Initialize()가 호출되지 않은 경우</exception>
@@ -638,7 +700,7 @@ public static class AuditableRandom
 	/// <summary>
 	/// 저장된 (tick, userId)로 keystream 블록을 <paramref name="destination"/>에 결정론적으로 재생성한다(무할당, Audit 재현용).
 	/// </summary>
-	/// <param name="userId">생성 당시 사용한 ApplicationUser.Id 원본값</param>
+	/// <param name="userId">생성 당시 사용한 사용자 식별 문자열</param>
 	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
 	/// <param name="destination">최소 64바이트 출력 버퍼</param>
 	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
@@ -656,7 +718,7 @@ public static class AuditableRandom
 	/// 전역 _seed와 무관하게 동작하므로 Initialize() 없이도 호출할 수 있다.
 	/// </summary>
 	/// <param name="seed">생성 당시 사용한 32바이트 seed</param>
-	/// <param name="userId">생성 당시 사용한 ApplicationUser.Id 원본값</param>
+	/// <param name="userId">생성 당시 사용한 사용자 식별 문자열</param>
 	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
 	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
 	/// <exception cref="ArgumentException">seed 길이가 32바이트가 아닌 경우</exception>
@@ -672,7 +734,7 @@ public static class AuditableRandom
 	/// 전역 _seed와 무관하게 동작하므로 Initialize() 없이도 호출할 수 있다.
 	/// </summary>
 	/// <param name="seed">생성 당시 사용한 32바이트 seed</param>
-	/// <param name="userId">생성 당시 사용한 ApplicationUser.Id 원본값</param>
+	/// <param name="userId">생성 당시 사용한 사용자 식별 문자열</param>
 	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
 	/// <param name="destination">최소 64바이트 출력 버퍼</param>
 	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
@@ -697,7 +759,7 @@ public static class AuditableRandom
 	/// 등록된 seed와 (userId, tick, 길이)만으로 전체 내용을 재현할 수 있다.
 	/// 첫 64바이트는 같은 (userId, tick)의 <see cref="GetBlockChaCha20(string, Int64)"/>와 동일하다.
 	/// </summary>
-	/// <param name="userId">ApplicationUser.Id 원본값</param>
+	/// <param name="userId">결과를 바인딩할 사용자 식별 문자열(빈 문자열이면 빈 사용자)</param>
 	/// <param name="destination">출력 버퍼(길이 제한 없음)</param>
 	/// <param name="tick">생성에 사용된 고유 틱 — Audit Log 저장용</param>
 	/// <exception cref="InvalidOperationException">Initialize()가 호출되지 않은 경우</exception>
@@ -712,7 +774,7 @@ public static class AuditableRandom
 	/// 저장된 (tick, userId)로 keystream을 <paramref name="destination"/> 전체에 결정론적으로 재생성한다(Audit 재현용).
 	/// 생성 당시와 동일한 seed가 등록되어 있어야 같은 결과가 나온다.
 	/// </summary>
-	/// <param name="userId">생성 당시 사용한 ApplicationUser.Id 원본값</param>
+	/// <param name="userId">생성 당시 사용한 사용자 식별 문자열</param>
 	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
 	/// <param name="destination">출력 버퍼 — 생성 당시 길이 이하의 어떤 길이든 동일한 접두(prefix)를 얻는다</param>
 	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
@@ -734,7 +796,7 @@ public static class AuditableRandom
 	/// 전역 상태와 무관하게 동작하므로 Initialize() 없이도 호출할 수 있다.
 	/// </summary>
 	/// <param name="seed">생성 당시 사용한 32바이트 seed</param>
-	/// <param name="userId">생성 당시 사용한 ApplicationUser.Id 원본값</param>
+	/// <param name="userId">생성 당시 사용한 사용자 식별 문자열</param>
 	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
 	/// <param name="destination">출력 버퍼 — 생성 당시 길이 이하의 어떤 길이든 동일한 접두(prefix)를 얻는다</param>
 	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
