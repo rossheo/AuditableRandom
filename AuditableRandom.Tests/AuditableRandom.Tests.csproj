@@ -5,6 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- 어셈블리명은 프로젝트명(AuditableRandom.Tests). 네임스페이스는 라이브러리와 맞춰 Witness.Tests
+         (타입 AuditableRandom과 충돌하는 'AuditableRandom' 네임스페이스 생성 방지). -->
+    <RootNamespace>Witness.Tests</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\RandomLib\RandomLib.csproj" />
+    <ProjectReference Include="..\AuditableRandom\AuditableRandom.csproj" />
   </ItemGroup>
 
   <ItemGroup>

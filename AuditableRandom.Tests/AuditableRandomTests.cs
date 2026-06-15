@@ -1,9 +1,9 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
-using RandomLib;
+using Witness;
 using Xunit.Abstractions;
 
-namespace RandomLib.Tests;
+namespace Witness.Tests;
 
 /// <summary>
 /// 자체 구현한 ChaCha20 블록 함수가 RFC 8439 표준과 정합한지 보장한다.

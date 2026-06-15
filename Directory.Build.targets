@@ -1,0 +1,56 @@
+<Project>
+	<Target Name="GitInformation" BeforeTargets="BeforeBuild">
+		<PropertyGroup>
+			<!-- version.json에서 Major, Minor 읽기 -->
+			<VersionJsonPath>$(MSBuildThisFileDirectory)version.json</VersionJsonPath>
+			<VersionJsonText Condition="Exists('$(VersionJsonPath)')">$([System.IO.File]::ReadAllText('$(VersionJsonPath)'))</VersionJsonText>
+			<MajorVersion Condition=" '$(VersionJsonText)' != '' ">$([System.Text.RegularExpressions.Regex]::Match($(VersionJsonText), '"major"\s*:\s*(\d+)').Groups[1].Value)</MajorVersion>
+			<MajorVersion Condition=" '$(MajorVersion)' == '' ">0</MajorVersion>
+			<MinorVersion Condition=" '$(VersionJsonText)' != '' ">$([System.Text.RegularExpressions.Regex]::Match($(VersionJsonText), '"minor"\s*:\s*(\d+)').Groups[1].Value)</MinorVersion>
+			<MinorVersion Condition=" '$(MinorVersion)' == '' ">0</MinorVersion>
+		</PropertyGroup>
+
+		<!-- Git branch -->
+		<Exec Command="git rev-parse --abbrev-ref HEAD"
+					WorkingDirectory="$(MSBuildThisFileDirectory)"
+					StandardOutputImportance="Low"
+					ConsoleToMSBuild="true">
+			<Output TaskParameter="ConsoleOutput" PropertyName="GitBranchRaw" />
+		</Exec>
+		<!-- Git branchCommitCount -->
+		<Exec Command="git rev-list --count --since=&quot;$([System.DateTime]::UtcNow.ToString('yyyy-MM'))-01T00:00:00Z&quot; HEAD"
+					WorkingDirectory="$(MSBuildThisFileDirectory)"
+					StandardOutputImportance="Low"
+					ConsoleToMSBuild="true">
+			<Output TaskParameter="ConsoleOutput" PropertyName="GitBranchCommitCountRaw" />
+		</Exec>
+
+		<PropertyGroup>
+			<!-- Git 정보 -->
+			<GitBranch>$([System.String]::Copy($(GitBranchRaw)).Trim())</GitBranch>
+			<GitBranchCommitCount>$([System.Text.RegularExpressions.Regex]::Match($([System.String]::Copy($(GitBranchCommitCountRaw)).Trim()), '(\d{1,4})$').Groups[1].Value)</GitBranchCommitCount>
+
+			<!-- 기본값 설정 -->
+			<CurrentYear>$([System.DateTime]::UtcNow.Year.ToString())</CurrentYear>
+			<CurrentMonth>$([System.DateTime]::UtcNow.Month.ToString('00'))</CurrentMonth>
+			<DateTimeVersion>$([System.Convert]::ToInt32($(CurrentYear.Substring(1))$(CurrentMonth)))</DateTimeVersion>
+			<FullVersion>$(MajorVersion).$(MinorVersion).$(DateTimeVersion).$(GitBranchCommitCount)</FullVersion>
+
+			<!-- 버전 정보 -->
+			<AssemblyVersion>$(FullVersion)</AssemblyVersion>
+			<FileVersion>$(FullVersion)</FileVersion>
+			<!-- NuGet 패키지 버전도 동일 FullVersion으로 일치(version.json이 단일 출처). -->
+			<Version>$(FullVersion)</Version>
+			<PackageVersion>$(FullVersion)</PackageVersion>
+			<!-- SourceRevisionId(Git 커밋 해시)를 자동으로 AssemblyInformationalVersion에 붙입니다. -->
+			<!-- https://github.com/dotnet/sdk/blob/main/src/Tasks/Microsoft.NET.Build.Tasks/targets/Microsoft.NET.GenerateAssemblyInfo.targets -->
+			<InformationalVersion>$(FullVersion)+Branch.$(GitBranch).Sha</InformationalVersion>
+
+			<!-- 메타데이터 -->
+			<Company>RossHeo</Company>
+			<Authors>RossHeo</Authors>
+			<Copyright>Copyright © $(Company) $([System.DateTime]::UtcNow.ToString(yyyy))</Copyright>
+			<Product>AuditableRandom</Product>
+		</PropertyGroup>
+	</Target>
+</Project>

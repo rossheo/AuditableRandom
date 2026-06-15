@@ -1,0 +1,48 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- 어셈블리명은 프로젝트명(AuditableRandom)을 그대로 사용. 공개 네임스페이스만 Witness로 분리. -->
+    <RootNamespace>Witness</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- [SkipLocalsInit] 사용을 위해 필요(unsafe 코드는 없음). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!-- NuGet 패키지 메타데이터. Authors·Company·Copyright·Product·버전은 Directory.Build.targets가 주입. -->
+  <PropertyGroup>
+    <PackageId>AuditableRandom</PackageId>
+    <!-- 버전(Assembly/File/Package)은 Directory.Build.targets가 version.json 기반으로 주입. -->
+    <Title>AuditableRandom</Title>
+    <Description>ChaCha20 기반 감사 가능(재현 가능) 난수 생성기. (seed, userId, tick)만으로 keystream을 바이트 단위로 재현해 추첨·배정 결과를 사후 검증할 수 있다. Lemire 거부 표본추출로 modulo bias 제거, SIMD 최적화, 스레드 안전.</Description>
+    <PackageTags>random;rng;chacha20;cryptography;deterministic;reproducible;audit;fairness;simd;security</PackageTags>
+    <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/rossheo/AuditableRandom</PackageProjectUrl>
+
+    <!-- XML 문서를 패키지에 포함(IntelliSense). -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- SourceLink + 심볼(.snupkg) — .NET SDK 내장 SourceLink 사용(별도 패키지 불필요). -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.IO.Hashing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 저장소 루트의 README를 패키지에 포함. -->
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AuditableRandom.Tests" />
+  </ItemGroup>
+
+</Project>

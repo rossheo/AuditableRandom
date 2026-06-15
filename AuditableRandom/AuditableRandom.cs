@@ -5,7 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 
-namespace RandomLib;
+namespace Witness;
 
 /// <summary>
 /// ChaCha20 기반 감사 가능(재현 가능) 난수 생성기. 각 추출은 고유 <c>tick</c>을 함께 산출하며,

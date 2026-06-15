@@ -7,7 +7,7 @@ using BenchmarkDotNet.Exporters;
 using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Loggers;
 using BenchmarkDotNet.Toolchains.InProcess.Emit;
-using RandomLib;
+using Witness;
 
 namespace Benchmarks;
 

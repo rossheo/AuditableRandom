@@ -1,9 +1,0 @@
-<Solution>
-  <Folder Name="/solution items/">
-    <File Path="Directory.Packages.props" />
-    <File Path="README.md" />
-  </Folder>
-  <Project Path="RandomLib/RandomLib.csproj" />
-  <Project Path="RandomLib.Tests/RandomLib.Tests.csproj" />
-  <Project Path="Benchmarks/Benchmarks.csproj" />
-</Solution>

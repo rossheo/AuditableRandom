@@ -21,7 +21,7 @@
 
 ```csharp
 using System.Security.Cryptography;
-using RandomLib;
+using Witness;
 
 // 1) 프로세스 시작 시 단 한 번, 32바이트 seed를 등록한다.
 byte[] seed = RandomNumberGenerator.GetBytes(32);

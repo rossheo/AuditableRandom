@@ -12,7 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\RandomLib\RandomLib.csproj" />
+    <ProjectReference Include="..\AuditableRandom\AuditableRandom.csproj" />
   </ItemGroup>
 
 </Project>
