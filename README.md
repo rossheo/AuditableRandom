@@ -8,7 +8,8 @@
 
 ### 특징
 - **재현성**: 비밀 seed + `userId` + 발급 `tick` → 동일 keystream. 감사 로그로 추첨 결과를 사후 검증.
-  외부 감사자가 독립 구현으로 재현하기 위한 전체 명세는 [docs/AUDIT.md](docs/AUDIT.md) 참조.
+  외부 감사자가 독립 구현으로 재현하기 위한 전체 명세는
+  [docs/AUDIT.md](https://github.com/rossheo/AuditableRandom/blob/main/docs/AUDIT.md) 참조.
 - **암호학적 품질**: RFC 8439 ChaCha20(20 라운드) keystream. 분포 균등성은 카이제곱 검정으로 검증.
 - **편향 없는 범위 추출**: Lemire multiply-shift 거부 표본추출로 modulo bias 제거 — 모든 결과값이 동일 확률.
   일반 경로는 곱셈 1회뿐이라 나눗셈 기반 방식보다 빠르다.
@@ -86,6 +87,12 @@ AuditableRandom.Initialize(seed, resumeAfterTick: lastIssuedTick);
 - **리틀엔디안 의존**: 성능을 위해 키/논스 적재와 출력 기록을 LE로 처리한다(.NET 실행 환경은 사실상 전부 LE).
   빅엔디안으로 이식하면 출력이 달라져 재현이 깨진다.
 - **Shuffle은 감사 대상이 아니다**(틱을 저장하지 않음). 결과 재현이 필요 없는 셔플 전용이다.
+
+### 보안
+
+ChaCha20을 직접 구현한 라이브러리로 **독립적인 외부 암호 감사를 받지 않았다.** 비밀 seed가 유일한
+보안 경계이며, seed가 노출되면 `(userId, tick)`만으로 모든 출력을 재현할 수 있다. 보안 모델·전제와
+취약점 신고 절차는 [SECURITY.md](https://github.com/rossheo/AuditableRandom/blob/main/SECURITY.md) 참조.
 
 ## 통계 시뮬레이션: 1% 당첨과 연속 미당첨(TOP 3)
 
@@ -190,6 +197,24 @@ P(N회 동안 0회 당첨) = 0.99^N
 
 > 모든 사용자가 N회 안에 **반드시 1회 이상 당첨**되게 하려면 이는 난수로 만들 수 없고,
 > 연속 미당첨 횟수를 세어 임계값에서 강제 당첨시키는 **천장(pity) 시스템**을 별도 설계로 얹어야 한다.
+
+## 빌드 / 배포
+
+배포용 빌드는 **Release 구성**으로 한다. Release 빌드는 `GeneratePackageOnBuild` 설정에 따라
+`.nupkg`와 심볼 패키지 `.snupkg`를 `AuditableRandom/bin/Release/`에 **자동 생성**한다(별도 `dotnet pack` 불필요).
+
+```
+dotnet build -c Release
+```
+
+생성된 패키지를 nuget.org에 게시(API 키 필요):
+
+```
+dotnet nuget push AuditableRandom/bin/Release/AuditableRandom.*.nupkg --api-key <NUGET_API_KEY> --source https://api.nuget.org/v3/index.json
+```
+
+> 게시 전 변경사항을 **커밋·푸시**해야 SourceLink가 가리키는 커밋과 패키지에 담긴 소스가 일치한다.
+> 버전은 `version.json`의 `major`와 빌드 시점(연·월·월간 커밋수)으로 자동 결정된다.
 
 ## 벤치마크
 

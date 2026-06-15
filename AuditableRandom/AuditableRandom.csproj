@@ -19,6 +19,7 @@
     <PackageTags>random;rng;chacha20;cryptography;deterministic;reproducible;audit;fairness;simd;security</PackageTags>
     <PackageLicenseExpression>BSD-3-Clause</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
     <PackageProjectUrl>https://github.com/rossheo/AuditableRandom</PackageProjectUrl>
 
     <!-- XML 문서를 패키지에 포함(IntelliSense). -->
@@ -37,8 +38,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 저장소 루트의 README를 패키지에 포함. -->
+    <!-- 저장소 루트의 README·아이콘을 패키지에 포함. -->
     <None Include="..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\icon.png" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,13 +1,17 @@
 <Project>
+	<!-- 패키징 대상 라이브러리는 Release 빌드 시 .nupkg/.snupkg를 자동 생성.
+	     테스트(IsPackable=false)·벤치마크(Exe)는 제외. -->
+	<PropertyGroup Condition="'$(IsPackable)' != 'false' and '$(OutputType)' != 'Exe' and '$(Configuration)' == 'Release'">
+		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+	</PropertyGroup>
+
 	<Target Name="GitInformation" BeforeTargets="BeforeBuild">
 		<PropertyGroup>
-			<!-- version.json에서 Major, Minor 읽기 -->
+			<!-- version.json에서 Major 읽기 -->
 			<VersionJsonPath>$(MSBuildThisFileDirectory)version.json</VersionJsonPath>
 			<VersionJsonText Condition="Exists('$(VersionJsonPath)')">$([System.IO.File]::ReadAllText('$(VersionJsonPath)'))</VersionJsonText>
 			<MajorVersion Condition=" '$(VersionJsonText)' != '' ">$([System.Text.RegularExpressions.Regex]::Match($(VersionJsonText), '"major"\s*:\s*(\d+)').Groups[1].Value)</MajorVersion>
 			<MajorVersion Condition=" '$(MajorVersion)' == '' ">0</MajorVersion>
-			<MinorVersion Condition=" '$(VersionJsonText)' != '' ">$([System.Text.RegularExpressions.Regex]::Match($(VersionJsonText), '"minor"\s*:\s*(\d+)').Groups[1].Value)</MinorVersion>
-			<MinorVersion Condition=" '$(MinorVersion)' == '' ">0</MinorVersion>
 		</PropertyGroup>
 
 		<!-- Git branch -->
@@ -34,7 +38,8 @@
 			<CurrentYear>$([System.DateTime]::UtcNow.Year.ToString())</CurrentYear>
 			<CurrentMonth>$([System.DateTime]::UtcNow.Month.ToString('00'))</CurrentMonth>
 			<DateTimeVersion>$([System.Convert]::ToInt32($(CurrentYear.Substring(1))$(CurrentMonth)))</DateTimeVersion>
-			<FullVersion>$(MajorVersion).$(MinorVersion).$(DateTimeVersion).$(GitBranchCommitCount)</FullVersion>
+			<!-- 3자리 SemVer: Major.DateTimeVersion(연월).CommitCount(월간 커밋수). minor 자리를 연월이 대체. -->
+			<FullVersion>$(MajorVersion).$(DateTimeVersion).$(GitBranchCommitCount)</FullVersion>
 
 			<!-- 버전 정보 -->
 			<AssemblyVersion>$(FullVersion)</AssemblyVersion>
