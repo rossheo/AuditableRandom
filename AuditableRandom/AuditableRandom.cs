@@ -95,12 +95,7 @@ public static class AuditableRandom
 	/// <exception cref="InvalidOperationException">이미 초기화된 경우</exception>
 	public static void Initialize(ReadOnlySpan<byte> seed, Int64 resumeAfterTick)
 	{
-		if (seed.Length != KeySize)
-		{
-			throw new ArgumentException(
-				$"seed는 {KeySize}바이트여야 합니다. (실제: {seed.Length}바이트)",
-				nameof(seed));
-		}
+		ThrowIfInvalidSeedLength(seed);
 		ArgumentOutOfRangeException.ThrowIfNegative(resumeAfterTick);
 
 		if (Interlocked.CompareExchange(ref _initialized, 1, 0) != 0)
@@ -515,11 +510,13 @@ public static class AuditableRandom
 	/// <exception cref="ArgumentOutOfRangeException"><paramref name="probability"/>가 NaN이거나 <c>[0, 1]</c> 범위를 벗어난 경우</exception>
 	public static bool Hits(string userId, double probability, out Int64 tick)
 	{
-		// NaN은 모든 비교가 거짓이라 그대로 두면 조용히 0%가 된다. 명시적으로 거부한다.
-		if (double.IsNaN(probability))
-			throw new ArgumentOutOfRangeException(nameof(probability), "확률은 NaN일 수 없다.");
-		ArgumentOutOfRangeException.ThrowIfNegative(probability);
-		ArgumentOutOfRangeException.ThrowIfGreaterThan(probability, 1.0);
+		// 한 번의 범위 비교로 NaN(모든 비교가 거짓)·음수·1 초과를 함께 거부한다.
+		// ThrowIfNegative는 IsNegative 기반이라 -0.0을 거부하지만, -0.0은 0.0과 같으므로 수용한다.
+		if (!(probability >= 0.0 && probability <= 1.0))
+		{
+			throw new ArgumentOutOfRangeException(nameof(probability), probability,
+				"확률은 [0, 1] 범위여야 하며 NaN일 수 없다.");
+		}
 		// NextDouble은 [0, 1)이므로 probability==0.0이면 항상 거짓, probability==1.0이면 항상 참으로 경계가 정확하다.
 		return NextDouble(userId, out tick) < probability;
 	}
@@ -543,6 +540,8 @@ public static class AuditableRandom
 	/// </summary>
 	public static void Shuffle<T>(string userId, IList<T> list)
 	{
+		// 원소가 1개 이하라 스왑이 없어도 null 인자는 일관되게 즉시 거부한다.
+		ArgumentNullException.ThrowIfNull(userId);
 		ArgumentNullException.ThrowIfNull(list);
 
 		// List<T>/배열은 Span 경로로 보내 스왑마다 발생하는 인터페이스 가상 호출을 제거한다.
@@ -578,6 +577,8 @@ public static class AuditableRandom
 	/// </summary>
 	public static void Shuffle<T>(string userId, Span<T> span)
 	{
+		// 원소가 1개 이하라 스왑이 없어도 null userId는 일관되게 즉시 거부한다.
+		ArgumentNullException.ThrowIfNull(userId);
 		Int32 n = span.Length;
 		if (n <= 1)
 			return;
@@ -715,7 +716,7 @@ public static class AuditableRandom
 
 	/// <summary>
 	/// 명시한 seed로 keystream 블록을 결정론적으로 재생성한다(과거 시드 재현용).
-	/// 전역 _seed와 무관하게 동작하므로 Initialize() 없이도 호출할 수 있다.
+	/// 전역 상태와 무관하게 동작하므로 Initialize() 없이도 호출할 수 있다.
 	/// </summary>
 	/// <param name="seed">생성 당시 사용한 32바이트 seed</param>
 	/// <param name="userId">생성 당시 사용한 사용자 식별 문자열</param>
@@ -731,24 +732,20 @@ public static class AuditableRandom
 
 	/// <summary>
 	/// 명시한 seed로 keystream 블록을 <paramref name="destination"/>에 결정론적으로 재생성한다(무할당, 과거 시드 재현용).
-	/// 전역 _seed와 무관하게 동작하므로 Initialize() 없이도 호출할 수 있다.
+	/// 전역 상태와 무관하게 동작하므로 Initialize() 없이도 호출할 수 있다.
 	/// </summary>
 	/// <param name="seed">생성 당시 사용한 32바이트 seed</param>
 	/// <param name="userId">생성 당시 사용한 사용자 식별 문자열</param>
 	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
 	/// <param name="destination">최소 64바이트 출력 버퍼</param>
+	/// <exception cref="ArgumentNullException">seed가 null인 경우</exception>
 	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
 	/// <exception cref="ArgumentException">seed가 32바이트가 아니거나 destination이 64바이트 미만인 경우</exception>
 	public static void GetBlockChaCha20(byte[] seed, string userId, Int64 tick, Span<byte> destination)
 	{
 		ArgumentOutOfRangeException.ThrowIfNegative(tick);
 		ArgumentNullException.ThrowIfNull(seed);
-		if (seed.Length != KeySize)
-		{
-			throw new ArgumentException(
-				$"seed는 {KeySize}바이트여야 합니다. (실제: {seed.Length}바이트)",
-				nameof(seed));
-		}
+		ThrowIfInvalidSeedLength(seed);
 		ThrowIfBlockBufferTooSmall(destination);
 		FillBlock(seed, userId, tick, destination);
 	}
@@ -799,18 +796,14 @@ public static class AuditableRandom
 	/// <param name="userId">생성 당시 사용한 사용자 식별 문자열</param>
 	/// <param name="tick">생성 당시 기록된 UniqueExecutionTick 값</param>
 	/// <param name="destination">출력 버퍼 — 생성 당시 길이 이하의 어떤 길이든 동일한 접두(prefix)를 얻는다</param>
+	/// <exception cref="ArgumentNullException">seed가 null인 경우</exception>
 	/// <exception cref="ArgumentOutOfRangeException">tick이 음수인 경우(생성 경로는 음수 tick을 발급하지 않으므로 손상된 감사 로그)</exception>
 	/// <exception cref="ArgumentException">seed 길이가 32바이트가 아닌 경우</exception>
 	public static void Fill(byte[] seed, string userId, Int64 tick, Span<byte> destination)
 	{
 		ArgumentOutOfRangeException.ThrowIfNegative(tick);
 		ArgumentNullException.ThrowIfNull(seed);
-		if (seed.Length != KeySize)
-		{
-			throw new ArgumentException(
-				$"seed는 {KeySize}바이트여야 합니다. (실제: {seed.Length}바이트)",
-				nameof(seed));
-		}
+		ThrowIfInvalidSeedLength(seed);
 
 		Span<byte> nonce = stackalloc byte[12];
 		BinaryPrimitives.WriteInt64BigEndian(nonce[..8], tick);
@@ -861,6 +854,16 @@ public static class AuditableRandom
 	{
 		if (!Volatile.Read(ref _seedRegistered))
 			throw new InvalidOperationException("AuditableRandom.Initialize()를 먼저 호출해야 합니다.");
+	}
+
+	private static void ThrowIfInvalidSeedLength(ReadOnlySpan<byte> seed)
+	{
+		if (seed.Length != KeySize)
+		{
+			throw new ArgumentException(
+				$"seed는 {KeySize}바이트여야 합니다. (실제: {seed.Length}바이트)",
+				nameof(seed));
+		}
 	}
 
 	private static void ThrowIfBlockBufferTooSmall(Span<byte> destination)

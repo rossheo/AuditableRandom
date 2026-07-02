@@ -739,6 +739,10 @@ public class InitializeTests
 			Assert.True(alwaysTick > resume);
 		}
 
+		// -0.0은 0.0과 같은 값이므로 거부하지 않고 0% 확률로 동작해야 한다.
+		Assert.False(AuditableRandom.Hits("hit-dbl-bound", -0.0, out Int64 negZeroTick));
+		Assert.True(negZeroTick > resume);
+
 		// null userId는 ArgumentNullException(초기화 후 전역 경로의 WriteUserIdHash에서 검증).
 		Assert.Throws<ArgumentNullException>(() => AuditableRandom.NextInt32(null!, 10));
 
@@ -814,6 +818,29 @@ public class HitsValidationTests
 	[Fact]
 	public void Hits_ProbabilityAboveOne_Throws() =>
 		Assert.Throws<ArgumentOutOfRangeException>(() => AuditableRandom.Hits(1.001));
+}
+
+/// <summary>
+/// Shuffle 인자 검증. null 검증은 스왑(RNG 상태 접근) 이전에 일어나므로
+/// 원소 수와 무관하게 즉시 던지며, Initialize() 없이 독립 실행된다.
+/// </summary>
+public class ShuffleValidationTests
+{
+	[Fact]
+	public void NullUserId_Throws_EvenWhenNoSwapNeeded()
+	{
+		// 원소 1개(스왑 없음)여도 null userId는 일관되게 거부해야 한다.
+		Assert.Throws<ArgumentNullException>(() => AuditableRandom.Shuffle(null!, new Int32[1]));
+		Assert.Throws<ArgumentNullException>(() => AuditableRandom.Shuffle(null!, new Int32[1].AsSpan()));
+		Assert.Throws<ArgumentNullException>(() => AuditableRandom.Shuffle(null!, new List<Int32> { 1 }));
+	}
+
+	[Fact]
+	public void NullCollection_Throws()
+	{
+		Assert.Throws<ArgumentNullException>(() => AuditableRandom.Shuffle("u", (Int32[])null!));
+		Assert.Throws<ArgumentNullException>(() => AuditableRandom.Shuffle("u", (IList<Int32>)null!));
+	}
 }
 
 /// <summary>
