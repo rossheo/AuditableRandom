@@ -5,7 +5,11 @@
 		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
 	</PropertyGroup>
 
-	<Target Name="GitInformation" BeforeTargets="BeforeBuild">
+	<!-- 버전 속성을 *소비*하는 SDK 타깃(GetAssemblyVersion → AssemblyVersion,
+	     CoreGenerateAssemblyInfo → File/InformationalVersion 속성을 AssemblyInfo.cs로 기록)보다
+	     반드시 먼저 실행돼야 한다. BeforeBuild에 걸면 publish/pack·일부 증분 경로에서 이들 뒤로 밀려
+	     기본값(1.0.0)이 스탬프되는 문제가 있었다. -->
+	<Target Name="GitInformation" BeforeTargets="GetAssemblyVersion;CoreGenerateAssemblyInfo">
 		<PropertyGroup>
 			<!-- version.json에서 Major 읽기 -->
 			<VersionJsonPath>$(MSBuildThisFileDirectory)version.json</VersionJsonPath>
@@ -54,7 +58,7 @@
 			<!-- 메타데이터 -->
 			<Company>RossHeo</Company>
 			<Authors>RossHeo</Authors>
-			<Copyright>Copyright © $(Company) $([System.DateTime]::UtcNow.ToString(yyyy))</Copyright>
+			<Copyright>Copyright © $(Company) 2026-$([System.DateTime]::UtcNow.ToString(yyyy))</Copyright>
 			<Product>AuditableRandom</Product>
 		</PropertyGroup>
 	</Target>
